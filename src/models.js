@@ -406,10 +406,43 @@ const CURSOR_ALIASES = {
 };
 for (const [k, v] of Object.entries(CURSOR_ALIASES)) _lookup.set(k, v);
 
+function publicModelAliases() {
+  const raw = String(process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES || '').trim();
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const sep = part.includes('=>') ? '=>' : '=';
+      const idx = part.indexOf(sep);
+      if (idx <= 0) return null;
+      const publicName = part.slice(0, idx).trim();
+      const targetName = part.slice(idx + sep.length).trim();
+      if (!publicName || !targetName) return null;
+      return { publicName, targetName, targetKey: _lookup.get(targetName) || _lookup.get(targetName.toLowerCase()) || targetName };
+    })
+    .filter(Boolean);
+}
+
+function publicModelAliasMap() {
+  const map = new Map();
+  for (const alias of publicModelAliases()) {
+    map.set(alias.publicName, alias.targetKey);
+    map.set(alias.publicName.toLowerCase(), alias.targetKey);
+  }
+  return map;
+}
+
+function hidePublicModelAliasTargets() {
+  return process.env.WINDSURFAPI_PUBLIC_MODEL_ALIAS_HIDE_TARGETS === '1';
+}
+
 /** Resolve user model name → internal model key. */
 export function resolveModel(name) {
   if (!name) return null;
-  return _lookup.get(name) || _lookup.get(name.toLowerCase()) || name;
+  const aliases = publicModelAliasMap();
+  return aliases.get(name) || aliases.get(name.toLowerCase()) || _lookup.get(name) || _lookup.get(name.toLowerCase()) || name;
 }
 
 /** Get model info including enum and uid. */
@@ -551,8 +584,13 @@ export function getTierModels(tier) {
 /** List all models in OpenAI /v1/models format. Hides deprecated models. */
 export function listModels() {
   const ts = Math.floor(Date.now() / 1000);
-  return Object.entries(MODELS)
+  const publicAliases = publicModelAliases();
+  const hiddenTargets = hidePublicModelAliasTargets()
+    ? new Set(publicAliases.map(alias => alias.targetKey))
+    : new Set();
+  const baseModels = Object.entries(MODELS)
     .filter(([, info]) => !info.deprecated)
+    .filter(([id]) => !hiddenTargets.has(id))
     .map(([id, info]) => ({
       id: info.name,
       object: 'model',
@@ -560,6 +598,20 @@ export function listModels() {
       owned_by: info.provider,
       _windsurf_id: id,
     }));
+  const aliasModels = publicAliases
+    .map(alias => {
+      const targetInfo = MODELS[alias.targetKey];
+      if (!targetInfo || targetInfo.deprecated) return null;
+      return {
+        id: alias.publicName,
+        object: 'model',
+        created: ts,
+        owned_by: targetInfo.provider,
+        _windsurf_id: alias.targetKey,
+      };
+    })
+    .filter(Boolean);
+  return [...aliasModels, ...baseModels];
 }
 
 /**

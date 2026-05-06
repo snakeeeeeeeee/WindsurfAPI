@@ -4,6 +4,7 @@ import {
   MODELS,
   resolveModel,
   getModelInfo,
+  listModels,
   mergeCloudModels,
 } from '../src/models.js';
 
@@ -109,6 +110,30 @@ describe('v2.0.29 model catalog correctness', () => {
       if (MODELS[dynamicKey]) {
         delete MODELS[dynamicKey];
       }
+    }
+  });
+
+  it('supports public model aliases for external names while routing to internal targets', () => {
+    const prevAliases = process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES;
+    const prevHide = process.env.WINDSURFAPI_PUBLIC_MODEL_ALIAS_HIDE_TARGETS;
+    process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES = [
+      'claude-opus-4-7=claude-opus-4-7-medium',
+      'claude-haiku-4-5=>claude-4.5-haiku',
+    ].join(',');
+    process.env.WINDSURFAPI_PUBLIC_MODEL_ALIAS_HIDE_TARGETS = '1';
+    try {
+      assert.equal(resolveModel('claude-opus-4-7'), 'claude-opus-4-7-medium');
+      assert.equal(resolveModel('claude-haiku-4-5'), 'claude-4.5-haiku');
+      const ids = listModels().map(m => m.id);
+      assert.ok(ids.includes('claude-opus-4-7'));
+      assert.ok(ids.includes('claude-haiku-4-5'));
+      assert.equal(ids.includes('claude-opus-4-7-medium'), false);
+      assert.equal(ids.includes('claude-4.5-haiku'), false);
+    } finally {
+      if (prevAliases === undefined) delete process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES;
+      else process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES = prevAliases;
+      if (prevHide === undefined) delete process.env.WINDSURFAPI_PUBLIC_MODEL_ALIAS_HIDE_TARGETS;
+      else process.env.WINDSURFAPI_PUBLIC_MODEL_ALIAS_HIDE_TARGETS = prevHide;
     }
   });
 });
