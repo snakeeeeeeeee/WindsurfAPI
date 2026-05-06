@@ -46,6 +46,7 @@ function reportedAnthropicUsageBasis() {
   if (!raw) return 'upstream';
   if (raw === 'client' || raw === 'request' || raw === 'payload') return 'client';
   if (raw === 'official' || raw === 'anthropic' || raw === 'cache') return 'official';
+  if (raw === 'hybrid' || raw === 'mixed') return 'hybrid';
   return 'upstream';
 }
 
@@ -127,6 +128,30 @@ function scaleAnthropicCacheCreationSplit(split, reportedTotal) {
     ephemeral_5m_input_tokens: reported5m,
     ephemeral_1h_input_tokens: reportedTotal - reported5m,
   };
+}
+
+function nonNegativeInteger(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
+function normalizeAnthropicCacheCreationSplit(split, reportedTotal) {
+  const total = nonNegativeInteger(reportedTotal);
+  if (!split || typeof split !== 'object') {
+    return {
+      ephemeral_5m_input_tokens: total,
+      ephemeral_1h_input_tokens: 0,
+    };
+  }
+
+  const normalized = {
+    ephemeral_5m_input_tokens: nonNegativeInteger(split.ephemeral_5m_input_tokens),
+    ephemeral_1h_input_tokens: nonNegativeInteger(split.ephemeral_1h_input_tokens),
+  };
+  const splitTotal = normalized.ephemeral_5m_input_tokens + normalized.ephemeral_1h_input_tokens;
+  if (splitTotal === total) return normalized;
+  return scaleAnthropicCacheCreationSplit(normalized, total);
 }
 
 // Real Claude Code 2.1.120 traffic carries metadata.user_id as a
@@ -421,6 +446,12 @@ function buildOfficialReportedUsageBasis(body, context = {}) {
   if (!anthropicReportedCacheBucketsEnabled()) return null;
   if (reportedAnthropicUsageBasis() !== 'official') return null;
 
+  return buildOfficialReportedUsageCandidate(body, context);
+}
+
+function buildOfficialReportedUsageCandidate(body, context = {}) {
+  if (!anthropicReportedCacheBucketsEnabled()) return null;
+
   const now = Date.now();
   pruneReportedAnthropicCache(now);
   const totalPromptTokens = estimateAnthropicClientPromptTokens(body);
@@ -492,6 +523,69 @@ function buildOfficialReportedUsageBasis(body, context = {}) {
       ephemeral_5m_input_tokens: cacheCreation5m,
       ephemeral_1h_input_tokens: cacheCreation1h,
     },
+    skipConfiguredCacheRewrite: true,
+  };
+}
+
+function upstreamReportedUsageBasis(usage = {}) {
+  const cacheRead = nonNegativeInteger(
+    usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens,
+  );
+  const cacheCreation = nonNegativeInteger(usage.cache_creation_input_tokens);
+  const promptTotal = nonNegativeInteger(usage.prompt_tokens ?? usage.input_tokens);
+  const freshOverride = reportedAnthropicFreshInputTokens();
+  const freshInput = freshOverride === null
+    ? Math.max(0, promptTotal - cacheRead)
+    : freshOverride;
+  const cacheCreationSplit = normalizeAnthropicCacheCreationSplit(
+    usage.cache_creation,
+    cacheCreation,
+  );
+
+  return {
+    promptTotal,
+    input_tokens: freshInput,
+    cache_creation_input_tokens: cacheCreation,
+    cache_read_input_tokens: cacheRead,
+    cache_creation: cacheCreationSplit,
+    skipConfiguredCacheRewrite: true,
+  };
+}
+
+function buildHybridReportedUsageBasis(body, context = {}, upstreamUsage = {}) {
+  if (!anthropicReportedCacheBucketsEnabled()) return null;
+  if (reportedAnthropicUsageBasis() !== 'hybrid') return null;
+
+  const upstreamBasis = upstreamReportedUsageBasis(upstreamUsage);
+  if (upstreamBasis.cache_read_input_tokens > 0) return upstreamBasis;
+
+  const officialBasis = buildOfficialReportedUsageCandidate(body, context);
+  if (!officialBasis || officialBasis.cache_read_input_tokens <= 0) return upstreamBasis;
+
+  const conservativeCreation = Math.min(
+    upstreamBasis.cache_creation_input_tokens,
+    Number(officialBasis.cache_creation_input_tokens) || 0,
+  );
+  const freshOverride = reportedAnthropicFreshInputTokens();
+  const promptTotal = Math.max(
+    Number(officialBasis.promptTotal) || 0,
+    (Number(officialBasis.input_tokens) || 0)
+      + (Number(officialBasis.cache_read_input_tokens) || 0)
+      + (Number(officialBasis.cache_creation_input_tokens) || 0),
+  );
+  const freshInput = freshOverride === null
+    ? Math.max(1, promptTotal - officialBasis.cache_read_input_tokens - conservativeCreation)
+    : freshOverride;
+
+  return {
+    promptTotal,
+    input_tokens: freshInput,
+    cache_creation_input_tokens: conservativeCreation,
+    cache_read_input_tokens: officialBasis.cache_read_input_tokens,
+    cache_creation: scaleAnthropicCacheCreationSplit(
+      officialBasis.cache_creation,
+      conservativeCreation,
+    ),
     skipConfiguredCacheRewrite: true,
   };
 }
@@ -794,7 +888,15 @@ function buildAnthropicUsage(usage, opts = {}) {
     cache_creation: split,
   };
   if (opts.reportedUsageBasis && typeof opts.reportedUsageBasis === 'object') {
-    const basis = opts.reportedUsageBasis;
+    const basis = typeof opts.reportedUsageBasis.resolve === 'function'
+      ? opts.reportedUsageBasis.resolve(usage)
+      : opts.reportedUsageBasis;
+    if (!basis || typeof basis !== 'object') {
+      return applyAnthropicReportedCacheBuckets(anthropicUsage, {
+        promptTotal,
+        cacheRead,
+      });
+    }
     const basisUsage = {
       ...anthropicUsage,
       input_tokens: Number(basis.input_tokens) || 0,
@@ -1149,8 +1251,14 @@ export async function handleMessages(body, context = {}) {
   const effectiveContext = subKey
     ? { ...context, callerKey: `${context.callerKey || ''}:user:${subKey}` }
     : context;
-  const reportedUsageBasis = buildOfficialReportedUsageBasis(body, effectiveContext)
-    || buildClientReportedUsageBasis(body);
+  const reportedUsageRequestBody = reportedAnthropicUsageBasis() === 'hybrid'
+    ? structuredClone(body)
+    : body;
+  const reportedUsageBasis = buildOfficialReportedUsageBasis(reportedUsageRequestBody, effectiveContext)
+    || buildClientReportedUsageBasis(reportedUsageRequestBody)
+    || (reportedAnthropicUsageBasis() === 'hybrid'
+      ? { resolve: usage => buildHybridReportedUsageBasis(reportedUsageRequestBody, effectiveContext, usage) }
+      : null);
   const outputBasis = reportedAnthropicOutputBasis();
   const openaiBody = anthropicToOpenAI(body);
 

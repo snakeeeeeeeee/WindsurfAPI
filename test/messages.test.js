@@ -730,6 +730,196 @@ describe('Anthropic messages request translation', () => {
     }
   });
 
+  it('hybrid reported usage preserves upstream cache reads when Cascade already reports a hit', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+    const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'hybrid';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
+    try {
+      const result = await handleMessages({
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: 'stable system', cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: 'hello' }],
+      }, {
+        callerKey: 'api:hybrid-upstream-hit',
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: {
+                prompt_tokens: 6570,
+                completion_tokens: 77,
+                total_tokens: 14647,
+                prompt_tokens_details: { cached_tokens: 6000 },
+                cache_read_input_tokens: 6000,
+                cache_creation_input_tokens: 8000,
+                cache_creation: { ephemeral_5m_input_tokens: 3000, ephemeral_1h_input_tokens: 5000 },
+              },
+            },
+          };
+        },
+      });
+
+      assert.equal(result.body.usage.input_tokens, 1);
+      assert.equal(result.body.usage.cache_read_input_tokens, 6000);
+      assert.equal(result.body.usage.cache_creation_input_tokens, 8000);
+      assert.deepEqual(result.body.usage.cache_creation, {
+        ephemeral_5m_input_tokens: 3000,
+        ephemeral_1h_input_tokens: 5000,
+      });
+      assert.equal(result.body.usage.output_tokens, 77);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
+      if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
+    }
+  });
+
+  it('hybrid reported usage fills full-history prefix reads and caps cache creation conservatively', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+    const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+    const prevTailRatio = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'hybrid';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO = '10%';
+    try {
+      const stableSystem = 'Hybrid stable prefix. '.repeat(120);
+      const firstPayload = 'first cached user block. '.repeat(120);
+      const expectedRead = estimateAnthropicClientPromptTokens({
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: stableSystem }],
+        messages: [{ role: 'user', content: [{ type: 'text', text: firstPayload }] }],
+      });
+      const requestForRound = (round) => ({
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: stableSystem }],
+        messages: round === 1
+          ? [{
+              role: 'user',
+              content: [{ type: 'text', text: firstPayload, cache_control: { type: 'ephemeral', ttl: '1h' } }],
+            }]
+          : [
+              { role: 'user', content: [{ type: 'text', text: firstPayload }] },
+              { role: 'assistant', content: 'round one answer' },
+              {
+                role: 'user',
+                content: [{ type: 'text', text: 'second tail block. '.repeat(120), cache_control: { type: 'ephemeral', ttl: '1h' } }],
+              },
+            ],
+      });
+      const context = {
+        callerKey: 'api:hybrid-full-history',
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: {
+                prompt_tokens: 570,
+                completion_tokens: 90,
+                total_tokens: 10570,
+                prompt_tokens_details: { cached_tokens: 0 },
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 10000,
+                cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 10000 },
+              },
+            },
+          };
+        },
+      };
+
+      const first = await handleMessages(requestForRound(1), context);
+      const second = await handleMessages(requestForRound(2), context);
+      const expectedCreation = Math.ceil(second.body.usage.cache_read_input_tokens * 0.1);
+
+      assert.equal(first.body.usage.cache_read_input_tokens, 0);
+      assert.equal(first.body.usage.cache_creation_input_tokens, 10000);
+      assert.equal(second.body.usage.input_tokens, 1);
+      assert.ok(second.body.usage.cache_read_input_tokens > 0);
+      assert.equal(second.body.usage.cache_read_input_tokens, expectedRead);
+      assert.equal(second.body.usage.cache_creation_input_tokens, expectedCreation);
+      assert.ok(second.body.usage.cache_creation_input_tokens < 10000);
+      assert.deepEqual(second.body.usage.cache_creation, {
+        ephemeral_5m_input_tokens: 0,
+        ephemeral_1h_input_tokens: expectedCreation,
+      });
+      assert.equal(second.body.usage.output_tokens, 90);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
+      if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
+      if (prevTailRatio === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO = prevTailRatio;
+    }
+  });
+
+  it('mixed usage basis aliases hybrid and unknown basis still falls back to upstream', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+    const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
+    try {
+      const requestBody = {
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: 'Alias stable prefix.', cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: 'hello' }],
+      };
+      const context = {
+        callerKey: 'api:hybrid-alias',
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: {
+                prompt_tokens: 570,
+                completion_tokens: 2,
+                total_tokens: 1770,
+                prompt_tokens_details: { cached_tokens: 0 },
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 1200,
+              },
+            },
+          };
+        },
+      };
+
+      process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'mixed';
+      await handleMessages(structuredClone(requestBody), context);
+      const mixed = await handleMessages(structuredClone(requestBody), context);
+
+      process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'definitely-unknown';
+      const unknown = await handleMessages(structuredClone(requestBody), {
+        ...context,
+        callerKey: 'api:unknown-basis',
+      });
+
+      assert.ok(mixed.body.usage.cache_read_input_tokens > 0);
+      assert.equal(unknown.body.usage.input_tokens, 1);
+      assert.equal(unknown.body.usage.cache_read_input_tokens, 0);
+      assert.equal(unknown.body.usage.cache_creation_input_tokens, 1200);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
+      if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
+    }
+  });
+
   it('drops Anthropic server-side tool types (advisor / web_search / code_execution) before forwarding', async () => {
     let capturedBody = null;
     await handleMessages({
@@ -973,6 +1163,78 @@ describe('Anthropic messages request translation', () => {
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
       if (prevOutputBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_OUTPUT_BASIS;
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_OUTPUT_BASIS = prevOutputBasis;
+    }
+  });
+
+  it('applies hybrid full-history cache fallback on streaming terminal usage', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+    const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+    const prevTailRatio = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'hybrid';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO = '25%';
+    try {
+      const requestBody = {
+        model: 'claude-sonnet-4.6',
+        stream: true,
+        system: [{ type: 'text', text: 'Hybrid stream prefix. '.repeat(80) }],
+        messages: [{
+          role: 'user',
+          content: [{ type: 'text', text: 'cached stream block. '.repeat(100), cache_control: { type: 'ephemeral' } }],
+        }],
+      };
+      const expectedRead = estimateAnthropicClientPromptTokens(requestBody);
+      const context = {
+        callerKey: 'api:hybrid-stream-key',
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            stream: true,
+            async handler(res) {
+              res.write(chatChunk({ choices: [{ index: 0, delta: { role: 'assistant', content: 'hello' }, finish_reason: null }] }));
+              res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }));
+              res.write(chatChunk({
+                choices: [],
+                usage: {
+                  prompt_tokens: 570,
+                  completion_tokens: 91,
+                  total_tokens: 5570,
+                  prompt_tokens_details: { cached_tokens: 0 },
+                  cache_read_input_tokens: 0,
+                  cache_creation_input_tokens: 5000,
+                },
+              }));
+              res.end('data: [DONE]\n\n');
+            },
+          };
+        },
+      };
+
+      const first = await handleMessages(structuredClone(requestBody), context);
+      const firstRes = fakeRes();
+      await first.handler(firstRes);
+
+      const second = await handleMessages(structuredClone(requestBody), context);
+      const secondRes = fakeRes();
+      await second.handler(secondRes);
+      const events = parseAnthropicEvents(secondRes.body);
+      const delta = events.find(e => e.event === 'message_delta');
+
+      assert.equal(delta.data.usage.input_tokens, 1);
+      assert.equal(delta.data.usage.cache_read_input_tokens, expectedRead);
+      assert.equal(delta.data.usage.cache_creation_input_tokens, 0);
+      assert.equal(delta.data.usage.output_tokens, 91);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
+      if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
+      if (prevTailRatio === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO = prevTailRatio;
     }
   });
 
