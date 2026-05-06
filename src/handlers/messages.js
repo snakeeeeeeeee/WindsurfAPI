@@ -45,7 +45,23 @@ function reportedAnthropicUsageBasis() {
   const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS || '').trim().toLowerCase();
   if (!raw) return 'upstream';
   if (raw === 'client' || raw === 'request' || raw === 'payload') return 'client';
+  if (raw === 'official' || raw === 'anthropic' || raw === 'cache') return 'official';
   return 'upstream';
+}
+
+function reportedAnthropicOutputBasis(usageBasis = reportedAnthropicUsageBasis()) {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_OUTPUT_BASIS || '').trim().toLowerCase();
+  if (raw === 'response' || raw === 'content' || raw === 'client') return 'response';
+  if (raw === 'upstream' || raw === 'cascade' || raw === 'server') return 'upstream';
+  return usageBasis === 'official' ? 'response' : 'upstream';
+}
+
+function reportedAnthropicCacheMaxEntries() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_MAX_ENTRIES || '').trim();
+  if (!raw) return 10000;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 10000;
+  return Math.max(100, Math.min(1000000, Math.floor(n)));
 }
 
 function reportedAnthropicFreshInputTokens() {
@@ -217,6 +233,10 @@ function estimateAnthropicContentTokens(content) {
   return tokens;
 }
 
+function estimateAnthropicResponseContentTokens(content) {
+  return estimateAnthropicContentTokens(content);
+}
+
 export function estimateAnthropicClientPromptTokens(body) {
   let tokens = 0;
 
@@ -239,6 +259,194 @@ export function estimateAnthropicClientPromptTokens(body) {
   }
 
   return Math.max(1, tokens);
+}
+
+function cacheTtlMs(ttl) {
+  return ttl === '1h' ? 60 * 60 * 1000 : 5 * 60 * 1000;
+}
+
+function stripCacheControlForHash(value) {
+  if (Array.isArray(value)) return value.map(stripCacheControlForHash);
+  if (!value || typeof value !== 'object') return value;
+  const out = {};
+  for (const [key, val] of Object.entries(value)) {
+    if (key === 'cache_control') continue;
+    out[key] = stripCacheControlForHash(val);
+  }
+  return out;
+}
+
+function canonicalCacheSegment(value) {
+  return jsonForUsageEstimate(stripCacheControlForHash(value));
+}
+
+function messageForCacheSegment(message) {
+  if (!message || typeof message !== 'object') return message;
+  return {
+    role: message.role,
+    content: stripCacheControlForHash(message.content),
+  };
+}
+
+function estimateSystemBlockTokens(block) {
+  return estimateAnthropicContentTokens([block]);
+}
+
+function estimateToolTokens(tool) {
+  return 8 + estimateJsonTokens(tool);
+}
+
+function estimateMessageTokens(message) {
+  return 4 + estimateAnthropicContentTokens(message?.content);
+}
+
+function extractAnthropicCacheBreakpoints(body) {
+  const segments = [];
+  let parts = [];
+  let tokens = 0;
+
+  const addPart = (kind, value, tokenCount) => {
+    const canonical = canonicalCacheSegment({ kind, value });
+    parts.push(canonical);
+    tokens += tokenCount;
+    return canonical;
+  };
+  const pushBreakpoint = (ttl) => {
+    if (!parts.length) return;
+    segments.push({
+      ttl: ttl === '1h' ? '1h' : '5m',
+      tokens: Math.max(1, tokens),
+      hash: sha256Hex(parts.join('\n')),
+    });
+  };
+  const maybeBreakpoint = (value) => {
+    const cc = value?.cache_control;
+    if (cc && typeof cc === 'object' && cc.type === 'ephemeral') pushBreakpoint(cc.ttl);
+  };
+
+  if (Array.isArray(body?.tools)) {
+    for (const tool of body.tools) {
+      addPart('tool', stripCacheControlForHash(tool), estimateToolTokens(tool));
+      maybeBreakpoint(tool);
+    }
+  }
+
+  if (typeof body?.system === 'string') {
+    addPart('system', body.system, estimateTextTokens(body.system));
+  } else if (Array.isArray(body?.system)) {
+    for (const block of body.system) {
+      addPart('system', stripCacheControlForHash(block), estimateSystemBlockTokens(block));
+      maybeBreakpoint(block);
+    }
+  }
+
+  if (Array.isArray(body?.messages)) {
+    for (const message of body.messages) {
+      if (Array.isArray(message?.content)) {
+        addPart('message_role', { role: message.role }, 4);
+        for (const block of message.content) {
+          const tokenCount = estimateAnthropicContentTokens([block]);
+          addPart('message_block', { role: message.role, content: stripCacheControlForHash(block) }, tokenCount);
+          maybeBreakpoint(block);
+        }
+      } else {
+        addPart('message', messageForCacheSegment(message), estimateMessageTokens(message));
+      }
+    }
+  }
+
+  if (body?.cache_control && typeof body.cache_control === 'object' && body.cache_control.type === 'ephemeral') {
+    pushBreakpoint(body.cache_control.ttl);
+  }
+
+  return segments.slice(-4);
+}
+
+const reportedAnthropicCacheEntries = new Map();
+
+export function resetReportedAnthropicCacheForTests() {
+  reportedAnthropicCacheEntries.clear();
+}
+
+function pruneReportedAnthropicCache(now = Date.now()) {
+  const maxEntries = reportedAnthropicCacheMaxEntries();
+  for (const [key, entry] of reportedAnthropicCacheEntries) {
+    if (!entry || entry.expiresAt <= now) reportedAnthropicCacheEntries.delete(key);
+  }
+  while (reportedAnthropicCacheEntries.size > maxEntries) {
+    const oldestKey = reportedAnthropicCacheEntries.keys().next().value;
+    if (!oldestKey) break;
+    reportedAnthropicCacheEntries.delete(oldestKey);
+  }
+}
+
+function reportedCacheScope(body, context = {}) {
+  return [
+    context.callerKey || '',
+    body?.model || 'claude-sonnet-4.6',
+  ].join('|');
+}
+
+function buildOfficialReportedUsageBasis(body, context = {}) {
+  if (!anthropicReportedCacheBucketsEnabled()) return null;
+  if (reportedAnthropicUsageBasis() !== 'official') return null;
+
+  const now = Date.now();
+  pruneReportedAnthropicCache(now);
+  const totalPromptTokens = estimateAnthropicClientPromptTokens(body);
+  const breakpoints = extractAnthropicCacheBreakpoints(body);
+  const scope = reportedCacheScope(body, context);
+  let cacheRead = 0;
+  let cacheCreation = 0;
+  let cacheCreation5m = 0;
+  let cacheCreation1h = 0;
+  let bestHit = null;
+
+  for (const bp of breakpoints) {
+    const key = `${scope}|${bp.ttl}|${bp.hash}`;
+    const hit = reportedAnthropicCacheEntries.get(key);
+    if (hit && hit.expiresAt > now && (!bestHit || hit.tokens > bestHit.tokens)) {
+      bestHit = { ...hit, key, ttl: bp.ttl };
+    }
+  }
+
+  if (bestHit) {
+    cacheRead = bestHit.tokens;
+    reportedAnthropicCacheEntries.set(bestHit.key, {
+      ...bestHit,
+      lastSeenAt: now,
+    });
+  }
+
+  for (const bp of breakpoints) {
+    if (bp.tokens <= cacheRead) continue;
+    const key = `${scope}|${bp.ttl}|${bp.hash}`;
+    const existing = reportedAnthropicCacheEntries.get(key);
+    if (existing && existing.expiresAt > now) continue;
+    const createTokens = Math.max(0, bp.tokens - cacheRead);
+    cacheCreation += createTokens;
+    if (bp.ttl === '1h') cacheCreation1h += createTokens;
+    else cacheCreation5m += createTokens;
+    reportedAnthropicCacheEntries.set(key, {
+      tokens: bp.tokens,
+      expiresAt: now + cacheTtlMs(bp.ttl),
+      lastSeenAt: now,
+    });
+  }
+  pruneReportedAnthropicCache(now);
+
+  const freshInput = Math.max(1, totalPromptTokens - cacheRead - cacheCreation);
+  return {
+    promptTotal: totalPromptTokens,
+    input_tokens: freshInput,
+    cache_creation_input_tokens: cacheCreation,
+    cache_read_input_tokens: cacheRead,
+    cache_creation: {
+      ephemeral_5m_input_tokens: cacheCreation5m,
+      ephemeral_1h_input_tokens: cacheCreation1h,
+    },
+    skipConfiguredCacheRewrite: true,
+  };
 }
 
 function buildClientReportedUsageBasis(body) {
@@ -486,6 +694,10 @@ export function openAIToAnthropic(result, model, msgId, opts = {}) {
     content.push({ type: 'text', text: '' });
   }
   const stopMap = { stop: 'end_turn', length: 'max_tokens', tool_calls: 'tool_use' };
+  const usageOpts = { ...opts };
+  if (reportedAnthropicOutputBasis() === 'response') {
+    usageOpts.reportedOutputTokens = estimateAnthropicResponseContentTokens(content);
+  }
   return {
     id: msgId,
     type: 'message',
@@ -494,7 +706,7 @@ export function openAIToAnthropic(result, model, msgId, opts = {}) {
     model: model || result.model,
     stop_reason: stopMap[choice?.finish_reason] || 'end_turn',
     stop_sequence: null,
-    usage: buildAnthropicUsage(usage, opts),
+    usage: buildAnthropicUsage(usage, usageOpts),
   };
 }
 
@@ -529,7 +741,7 @@ function buildAnthropicUsage(usage, opts = {}) {
   const freshInput = Math.max(0, promptTotal - cacheRead);
   const anthropicUsage = {
     input_tokens: freshInput,
-    output_tokens: usage.completion_tokens || usage.output_tokens || 0,
+    output_tokens: opts.reportedOutputTokens ?? usage.completion_tokens ?? usage.output_tokens ?? 0,
     cache_creation_input_tokens: cacheCreationFlat,
     cache_read_input_tokens: cacheRead,
     cache_creation: split,
@@ -546,6 +758,7 @@ function buildAnthropicUsage(usage, opts = {}) {
         ephemeral_1h_input_tokens: 0,
       },
     };
+    if (basis.skipConfiguredCacheRewrite) return basisUsage;
     return applyAnthropicReportedCacheBuckets(basisUsage, {
       promptTotal: Number(basis.promptTotal) || Number(basis.input_tokens) || 0,
       cacheRead: Number(basis.cache_read_input_tokens) || 0,
@@ -600,6 +813,8 @@ class AnthropicStreamTranslator {
     this.msgId = msgId;
     this.model = model;
     this.reportedUsageBasis = opts.reportedUsageBasis || null;
+    this.reportedOutputBasis = opts.reportedOutputBasis || reportedAnthropicOutputBasis();
+    this.reportedOutputTokens = 0;
     // Current content block: null | { type, index }
     // type: 'text' | 'thinking' | 'tool_use'
     this.current = null;
@@ -665,6 +880,7 @@ class AnthropicStreamTranslator {
 
   emitTextDelta(text) {
     if (!text) return;
+    if (this.reportedOutputBasis === 'response') this.reportedOutputTokens += estimateTextTokens(text);
     if (this.current?.type !== 'text') this.startBlock('text');
     this.send('content_block_delta', {
       type: 'content_block_delta',
@@ -675,6 +891,7 @@ class AnthropicStreamTranslator {
 
   emitThinkingDelta(text) {
     if (!text) return;
+    if (this.reportedOutputBasis === 'response') this.reportedOutputTokens += estimateTextTokens(text);
     if (this.current?.type !== 'thinking') this.startBlock('thinking');
     this.send('content_block_delta', {
       type: 'content_block_delta',
@@ -762,7 +979,12 @@ class AnthropicStreamTranslator {
     this.send('message_delta', {
       type: 'message_delta',
       delta: { stop_reason: this.stopReason, stop_sequence: null },
-      usage: buildAnthropicUsage(u, { reportedUsageBasis: this.reportedUsageBasis }),
+      usage: buildAnthropicUsage(u, {
+        reportedUsageBasis: this.reportedUsageBasis,
+        ...(this.reportedOutputBasis === 'response'
+          ? { reportedOutputTokens: Math.max(1, this.reportedOutputTokens) }
+          : {}),
+      }),
     });
     this.send('message_stop', { type: 'message_stop' });
   }
@@ -871,8 +1093,6 @@ export async function handleMessages(body, context = {}) {
   const msgId = genMsgId();
   const requestedModel = body.model || 'claude-sonnet-4.6';
   const wantStream = !!body.stream;
-  const reportedUsageBasis = buildClientReportedUsageBasis(body);
-  const openaiBody = anthropicToOpenAI(body);
   const chatHandler = context.handleChatCompletions || handleChatCompletions;
   // Augment callerKey with the per-user tag from metadata.user_id when
   // present so the cascade pool can isolate concurrent Claude Code users
@@ -882,6 +1102,10 @@ export async function handleMessages(body, context = {}) {
   const effectiveContext = subKey
     ? { ...context, callerKey: `${context.callerKey || ''}:user:${subKey}` }
     : context;
+  const reportedUsageBasis = buildOfficialReportedUsageBasis(body, effectiveContext)
+    || buildClientReportedUsageBasis(body);
+  const outputBasis = reportedAnthropicOutputBasis();
+  const openaiBody = anthropicToOpenAI(body);
 
   if (!wantStream) {
     const result = await chatHandler({
@@ -942,7 +1166,10 @@ export async function handleMessages(body, context = {}) {
       'X-Accel-Buffering': 'no',
     },
     async handler(realRes) {
-      const translator = new AnthropicStreamTranslator(realRes, msgId, requestedModel, { reportedUsageBasis });
+      const translator = new AnthropicStreamTranslator(realRes, msgId, requestedModel, {
+        reportedUsageBasis,
+        reportedOutputBasis: outputBasis,
+      });
       const captureRes = createCaptureRes(translator, realRes);
 
       // Forward client disconnect so the upstream cascade is cancelled.
