@@ -59,6 +59,36 @@ function reportedAnthropicCacheHitRate() {
   return Math.min(1, n);
 }
 
+function reportedAnthropicCacheCreationRate() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE || '').trim();
+  if (!raw) return 1;
+  let n = Number(raw.replace(/%$/, ''));
+  if (!Number.isFinite(n) || n < 0) return 1;
+  if (n > 1) n = n / 100;
+  if (n < 0) return 1;
+  return Math.min(1, n);
+}
+
+function scaleAnthropicCacheCreationSplit(split, reportedTotal) {
+  if (!split || typeof split !== 'object') return split;
+
+  const raw5m = Number(split.ephemeral_5m_input_tokens) || 0;
+  const raw1h = Number(split.ephemeral_1h_input_tokens) || 0;
+  const rawTotal = raw5m + raw1h;
+  if (reportedTotal <= 0 || rawTotal <= 0) {
+    return {
+      ephemeral_5m_input_tokens: 0,
+      ephemeral_1h_input_tokens: 0,
+    };
+  }
+
+  const reported5m = Math.floor((reportedTotal * raw5m) / rawTotal);
+  return {
+    ephemeral_5m_input_tokens: reported5m,
+    ephemeral_1h_input_tokens: reportedTotal - reported5m,
+  };
+}
+
 // Real Claude Code 2.1.120 traffic carries metadata.user_id as a
 // JSON-encoded string with shape {device_id, account_uuid, session_id}.
 // Older Anthropic SDK clients send a plain string. The proxy currently
@@ -391,8 +421,14 @@ function applyAnthropicReportedCacheBuckets(anthropicUsage, { promptTotal = 0, c
 
   const freshOverride = reportedAnthropicFreshInputTokens();
   const rate = reportedAnthropicCacheHitRate();
+  const creationRate = reportedAnthropicCacheCreationRate();
   const reportedFresh = freshOverride === null ? anthropicUsage.input_tokens : freshOverride;
-  const cacheCreation = Number(anthropicUsage.cache_creation_input_tokens) || 0;
+  const originalCacheCreation = Number(anthropicUsage.cache_creation_input_tokens) || 0;
+  const cacheCreation = Math.floor(originalCacheCreation * creationRate);
+  const cacheCreationSplit = scaleAnthropicCacheCreationSplit(
+    anthropicUsage.cache_creation,
+    cacheCreation,
+  );
   const baseTotal = Math.max(
     Number(promptTotal) || 0,
     (Number(anthropicUsage.input_tokens) || 0) + (Number(cacheRead) || 0),
@@ -410,6 +446,8 @@ function applyAnthropicReportedCacheBuckets(anthropicUsage, { promptTotal = 0, c
   return {
     ...anthropicUsage,
     input_tokens: reportedFresh,
+    cache_creation_input_tokens: cacheCreation,
+    cache_creation: cacheCreationSplit,
     cache_read_input_tokens: reportedCacheRead,
   };
 }

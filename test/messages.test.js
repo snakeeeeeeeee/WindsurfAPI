@@ -329,9 +329,11 @@ describe('Anthropic messages request translation', () => {
     const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
     const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
     const prevRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
+    const prevCreationRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE;
     process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
     process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
     process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = '80';
+    delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE;
     try {
       let capturedBody = null;
       const result = await handleMessages({
@@ -372,6 +374,58 @@ describe('Anthropic messages request translation', () => {
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
       if (prevRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = prevRate;
+      if (prevCreationRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE = prevCreationRate;
+    }
+  });
+
+  it('can scale reported Anthropic cache creation while preserving configured visible hit rate', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+    const prevRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
+    const prevCreationRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = '80%';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE = '50%';
+    try {
+      const result = await handleMessages({
+        model: 'claude-sonnet-4.6',
+        messages: [{ role: 'user', content: 'hi' }],
+      }, {
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: {
+                prompt_tokens: 1000,
+                completion_tokens: 260,
+                total_tokens: 1260,
+                prompt_tokens_details: { cached_tokens: 0 },
+                cache_creation_input_tokens: 1000,
+                cache_creation: { ephemeral_5m_input_tokens: 700, ephemeral_1h_input_tokens: 300 },
+              },
+            },
+          };
+        },
+      });
+      assert.equal(result.body.usage.input_tokens, 1);
+      assert.equal(result.body.usage.cache_creation_input_tokens, 500);
+      assert.deepEqual(result.body.usage.cache_creation, {
+        ephemeral_5m_input_tokens: 350,
+        ephemeral_1h_input_tokens: 150,
+      });
+      assert.equal(result.body.usage.cache_read_input_tokens, 2005);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
+      if (prevRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = prevRate;
+      if (prevCreationRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE = prevCreationRate;
     }
   });
 
@@ -502,9 +556,11 @@ describe('Anthropic messages request translation', () => {
     const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
     const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
     const prevRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
+    const prevCreationRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE;
     process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
     process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
     process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = '0.8';
+    delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE;
     try {
       let capturedBody = null;
       const result = await handleMessages({
@@ -552,6 +608,8 @@ describe('Anthropic messages request translation', () => {
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
       if (prevRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = prevRate;
+      if (prevCreationRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE = prevCreationRate;
     }
   });
 
