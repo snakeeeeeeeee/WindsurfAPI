@@ -1,6 +1,11 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { annotateRiskyReadToolResult, extractCallerSubKey, handleMessages } from '../src/handlers/messages.js';
+import {
+  annotateRiskyReadToolResult,
+  estimateAnthropicClientPromptTokens,
+  extractCallerSubKey,
+  handleMessages,
+} from '../src/handlers/messages.js';
 import { applyJsonResponseHint, extractRequestedJsonKeys, isExplicitJsonRequested, stabilizeJsonPayload } from '../src/handlers/chat.js';
 
 function chatChunk(chunk) {
@@ -385,7 +390,7 @@ describe('Anthropic messages request translation', () => {
       });
       assert.equal(capturedBody.__skipReportedUsageOverrides, true);
       assert.equal(result.body.usage.input_tokens, 1);
-      assert.equal(result.body.usage.cache_read_input_tokens, 110561);
+      assert.equal(result.body.usage.cache_read_input_tokens, 110560);
       assert.equal(result.body.usage.cache_creation_input_tokens, 27639);
       assert.deepEqual(result.body.usage.cache_creation, {
         ephemeral_5m_input_tokens: 27639,
@@ -441,10 +446,81 @@ describe('Anthropic messages request translation', () => {
         ephemeral_5m_input_tokens: 350,
         ephemeral_1h_input_tokens: 150,
       });
-      assert.equal(result.body.usage.cache_read_input_tokens, 2005);
+      assert.equal(result.body.usage.cache_read_input_tokens, 2004);
     } finally {
       if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
+      if (prevRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = prevRate;
+      if (prevCreationRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE = prevCreationRate;
+    }
+  });
+
+  it('can base reported Anthropic usage on the original client payload instead of upstream wrapped usage', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+    const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+    const prevRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
+    const prevCreationRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'client';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = '80';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE = '50%';
+    try {
+      const requestBody = {
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: 'You are concise.', cache_control: { type: 'ephemeral' } }],
+        tools: [{
+          name: 'Read',
+          description: 'Read a file',
+          input_schema: { type: 'object', properties: { file_path: { type: 'string' } } },
+        }],
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: 'Summarize package.json' }] },
+        ],
+      };
+      const expectedBody = structuredClone(requestBody);
+      delete expectedBody.system[0].cache_control;
+      const expectedClientPrompt = estimateAnthropicClientPromptTokens(expectedBody);
+      const expectedCreation = Math.floor(expectedClientPrompt * 0.5);
+      const expectedRead = Math.ceil((0.8 * (1 + expectedCreation)) / 0.2);
+      const result = await handleMessages(structuredClone(requestBody), {
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: {
+                prompt_tokens: 50000,
+                completion_tokens: 260,
+                total_tokens: 90260,
+                prompt_tokens_details: { cached_tokens: 0 },
+                cache_creation_input_tokens: 40000,
+                cache_creation: { ephemeral_5m_input_tokens: 40000, ephemeral_1h_input_tokens: 0 },
+              },
+            },
+          };
+        },
+      });
+
+      assert.equal(result.body.usage.input_tokens, 1);
+      assert.equal(result.body.usage.cache_creation_input_tokens, expectedCreation);
+      assert.equal(result.body.usage.cache_read_input_tokens, expectedRead);
+      assert.deepEqual(result.body.usage.cache_creation, {
+        ephemeral_5m_input_tokens: expectedCreation,
+        ephemeral_1h_input_tokens: 0,
+      });
+      assert.equal(result.body.usage.output_tokens, 260);
+      assert.ok(result.body.usage.cache_creation_input_tokens < 40000);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
       if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
       if (prevRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;

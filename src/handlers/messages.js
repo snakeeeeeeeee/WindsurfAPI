@@ -41,6 +41,13 @@ function anthropicReportedCacheBucketsEnabled() {
   return process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS === '1';
 }
 
+function reportedAnthropicUsageBasis() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS || '').trim().toLowerCase();
+  if (!raw) return 'upstream';
+  if (raw === 'client' || raw === 'request' || raw === 'payload') return 'client';
+  return 'upstream';
+}
+
 function reportedAnthropicFreshInputTokens() {
   const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS || '').trim();
   if (!raw) return null;
@@ -57,6 +64,14 @@ function reportedAnthropicCacheHitRate() {
   if (n > 1) n = n / 100;
   if (n <= 0) return 0;
   return Math.min(1, n);
+}
+
+function cacheReadForVisibleHitRate(freshInput, cacheCreation, rate) {
+  if (!rate || rate <= 0 || rate >= 1) return 0;
+  const numerator = rate * (freshInput + cacheCreation);
+  const denominator = 1 - rate;
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return 0;
+  return Math.ceil((numerator / denominator) - 1e-9);
 }
 
 function reportedAnthropicCacheCreationRate() {
@@ -114,21 +129,7 @@ export function extractCallerSubKey(body) {
   return sha256Hex(tag).slice(0, 16);
 }
 
-// Anthropic prompt caching (`cache_control`) — verified spec:
-//   - shape: { type: 'ephemeral', ttl?: '5m' | '1h' }, default ttl 5m
-//   - placeable on tools[], system[] blocks, messages[].content[] blocks
-//   - prefix-cumulative, ordered tools → system → messages
-//   - max 4 breakpoints per request
-//
-// Cascade upstream doesn't speak this dialect — its own caching layer
-// reports cacheReadTokens/cacheWriteTokens that already flow through
-// chat.js → openAIToAnthropic. We strip the markers before forwarding
-// (so they don't leak into Cascade requests) and expose a policy
-// summary for downstream stages: TTL hint for the conversation pool,
-// 5m vs 1h split attribution in usage.cache_creation.
-//
-// Returns: { has1h, breakpointCount } describing the request.
-function extractCachePolicy(body) {
+function collectCachePolicy(body, { strip = false } = {}) {
   let breakpointCount = 0;
   let has1h = false;
   const visit = (block) => {
@@ -137,7 +138,7 @@ function extractCachePolicy(body) {
     if (cc && typeof cc === 'object' && cc.type === 'ephemeral') {
       breakpointCount++;
       if (cc.ttl === '1h') has1h = true;
-      delete block.cache_control;
+      if (strip) delete block.cache_control;
     }
   };
   if (Array.isArray(body.tools)) for (const t of body.tools) visit(t);
@@ -153,9 +154,129 @@ function extractCachePolicy(body) {
       breakpointCount++;
       if (body.cache_control.ttl === '1h') has1h = true;
     }
-    delete body.cache_control;
+    if (strip) delete body.cache_control;
   }
   return { has1h, breakpointCount };
+}
+
+function estimateTextTokens(text) {
+  if (typeof text !== 'string' || !text) return 0;
+  return Math.ceil(text.length / 4);
+}
+
+function jsonForUsageEstimate(value) {
+  try {
+    return JSON.stringify(value, (key, val) => {
+      if (key === 'cache_control') return undefined;
+      if (key === 'data' && typeof val === 'string' && val.length > 256) {
+        return `[base64:${val.length}]`;
+      }
+      return val;
+    }) || '';
+  } catch {
+    return '';
+  }
+}
+
+function estimateJsonTokens(value) {
+  return estimateTextTokens(jsonForUsageEstimate(value));
+}
+
+function estimateImageTokens(block) {
+  const data = block?.source?.data;
+  if (typeof data === 'string' && data.length > 0) {
+    const approxBytes = Math.ceil((data.length * 3) / 4);
+    return Math.max(256, Math.min(4096, Math.ceil(approxBytes / 768) * 85));
+  }
+  return 1200;
+}
+
+function estimateAnthropicContentTokens(content) {
+  if (typeof content === 'string') return estimateTextTokens(content);
+  if (!Array.isArray(content)) return estimateJsonTokens(content);
+
+  let tokens = 0;
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    if (block.type === 'text') {
+      tokens += estimateTextTokens(block.text || '');
+    } else if (block.type === 'thinking') {
+      tokens += estimateTextTokens(block.thinking || '') + estimateTextTokens(block.signature || '');
+    } else if (block.type === 'image') {
+      tokens += estimateImageTokens(block);
+    } else if (block.type === 'tool_use') {
+      tokens += 8 + estimateTextTokens(block.name || '') + estimateJsonTokens(block.input || {});
+    } else if (block.type === 'tool_result') {
+      tokens += 8 + estimateAnthropicContentTokens(block.content);
+    } else if (block.type === 'document') {
+      tokens += 1000 + estimateJsonTokens({ ...block, source: undefined });
+    } else {
+      tokens += estimateJsonTokens(block);
+    }
+  }
+  return tokens;
+}
+
+export function estimateAnthropicClientPromptTokens(body) {
+  let tokens = 0;
+
+  if (typeof body?.system === 'string') {
+    tokens += estimateTextTokens(body.system);
+  } else if (Array.isArray(body?.system)) {
+    for (const block of body.system) tokens += estimateAnthropicContentTokens([block]);
+  }
+
+  if (Array.isArray(body?.tools)) {
+    for (const tool of body.tools) tokens += 8 + estimateJsonTokens(tool);
+  }
+  if (body?.tool_choice) tokens += estimateJsonTokens(body.tool_choice);
+
+  if (Array.isArray(body?.messages)) {
+    for (const message of body.messages) {
+      tokens += 4;
+      tokens += estimateAnthropicContentTokens(message?.content);
+    }
+  }
+
+  return Math.max(1, tokens);
+}
+
+function buildClientReportedUsageBasis(body) {
+  if (!anthropicReportedCacheBucketsEnabled()) return null;
+  if (reportedAnthropicUsageBasis() !== 'client') return null;
+
+  const promptTokens = estimateAnthropicClientPromptTokens(body);
+  const policy = collectCachePolicy(body, { strip: false });
+  const cacheCreation = promptTokens;
+  const cacheCreationSplit = policy.has1h
+    ? { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: cacheCreation }
+    : { ephemeral_5m_input_tokens: cacheCreation, ephemeral_1h_input_tokens: 0 };
+
+  return {
+    promptTotal: promptTokens,
+    input_tokens: promptTokens,
+    cache_creation_input_tokens: cacheCreation,
+    cache_read_input_tokens: 0,
+    cache_creation: cacheCreationSplit,
+  };
+}
+
+// Anthropic prompt caching (`cache_control`) — verified spec:
+//   - shape: { type: 'ephemeral', ttl?: '5m' | '1h' }, default ttl 5m
+//   - placeable on tools[], system[] blocks, messages[].content[] blocks
+//   - prefix-cumulative, ordered tools → system → messages
+//   - max 4 breakpoints per request
+//
+// Cascade upstream doesn't speak this dialect — its own caching layer
+// reports cacheReadTokens/cacheWriteTokens that already flow through
+// chat.js → openAIToAnthropic. We strip the markers before forwarding
+// (so they don't leak into Cascade requests) and expose a policy
+// summary for downstream stages: TTL hint for the conversation pool,
+// 5m vs 1h split attribution in usage.cache_creation.
+//
+// Returns: { has1h, breakpointCount } describing the request.
+function extractCachePolicy(body) {
+  return collectCachePolicy(body, { strip: true });
 }
 
 // ─── Anthropic → OpenAI request translation ──────────────────
@@ -339,7 +460,7 @@ export function annotateRiskyReadToolResult(content, { toolName = '', isError = 
 
 // ─── OpenAI → Anthropic non-stream response translation ──────
 
-export function openAIToAnthropic(result, model, msgId) {
+export function openAIToAnthropic(result, model, msgId, opts = {}) {
   const choice = result.choices?.[0];
   const usage = result.usage || {};
   const content = [];
@@ -373,7 +494,7 @@ export function openAIToAnthropic(result, model, msgId) {
     model: model || result.model,
     stop_reason: stopMap[choice?.finish_reason] || 'end_turn',
     stop_sequence: null,
-    usage: buildAnthropicUsage(usage),
+    usage: buildAnthropicUsage(usage, opts),
   };
 }
 
@@ -385,7 +506,7 @@ export function openAIToAnthropic(result, model, msgId) {
 // equals ephemeral_5m + ephemeral_1h. When chat.js doesn't supply a
 // split (no cache_control on the request) we attribute the whole
 // creation count to the 5m bucket since that's the spec default.
-function buildAnthropicUsage(usage) {
+function buildAnthropicUsage(usage, opts = {}) {
   const cacheRead = usage.cache_read_input_tokens
     ?? usage.prompt_tokens_details?.cached_tokens
     ?? 0;
@@ -413,13 +534,31 @@ function buildAnthropicUsage(usage) {
     cache_read_input_tokens: cacheRead,
     cache_creation: split,
   };
+  if (opts.reportedUsageBasis && typeof opts.reportedUsageBasis === 'object') {
+    const basis = opts.reportedUsageBasis;
+    const basisUsage = {
+      ...anthropicUsage,
+      input_tokens: Number(basis.input_tokens) || 0,
+      cache_creation_input_tokens: Number(basis.cache_creation_input_tokens) || 0,
+      cache_read_input_tokens: Number(basis.cache_read_input_tokens) || 0,
+      cache_creation: basis.cache_creation || {
+        ephemeral_5m_input_tokens: Number(basis.cache_creation_input_tokens) || 0,
+        ephemeral_1h_input_tokens: 0,
+      },
+    };
+    return applyAnthropicReportedCacheBuckets(basisUsage, {
+      promptTotal: Number(basis.promptTotal) || Number(basis.input_tokens) || 0,
+      cacheRead: Number(basis.cache_read_input_tokens) || 0,
+      useBaseRateFloor: false,
+    });
+  }
   return applyAnthropicReportedCacheBuckets(anthropicUsage, {
     promptTotal,
     cacheRead,
   });
 }
 
-function applyAnthropicReportedCacheBuckets(anthropicUsage, { promptTotal = 0, cacheRead = 0 } = {}) {
+function applyAnthropicReportedCacheBuckets(anthropicUsage, { promptTotal = 0, cacheRead = 0, useBaseRateFloor = true } = {}) {
   if (!anthropicReportedCacheBucketsEnabled()) return anthropicUsage;
 
   const freshOverride = reportedAnthropicFreshInputTokens();
@@ -436,10 +575,8 @@ function applyAnthropicReportedCacheBuckets(anthropicUsage, { promptTotal = 0, c
     Number(promptTotal) || 0,
     (Number(anthropicUsage.input_tokens) || 0) + (Number(cacheRead) || 0),
   );
-  const rateCacheRead = rate > 0 ? Math.ceil(baseTotal * rate) : 0;
-  const visibleRateCacheRead = rate > 0 && rate < 1
-    ? Math.ceil((rate * (reportedFresh + cacheCreation)) / (1 - rate))
-    : 0;
+  const rateCacheRead = useBaseRateFloor && rate > 0 ? Math.ceil(baseTotal * rate) : 0;
+  const visibleRateCacheRead = cacheReadForVisibleHitRate(reportedFresh, cacheCreation, rate);
   const reportedCacheRead = Math.max(
     Number(anthropicUsage.cache_read_input_tokens) || 0,
     rateCacheRead,
@@ -458,10 +595,11 @@ function applyAnthropicReportedCacheBuckets(anthropicUsage, { promptTotal = 0, c
 // ─── Streaming translator: intercepts OpenAI SSE, emits Anthropic SSE ──
 
 class AnthropicStreamTranslator {
-  constructor(res, msgId, model) {
+  constructor(res, msgId, model, opts = {}) {
     this.res = res;
     this.msgId = msgId;
     this.model = model;
+    this.reportedUsageBasis = opts.reportedUsageBasis || null;
     // Current content block: null | { type, index }
     // type: 'text' | 'thinking' | 'tool_use'
     this.current = null;
@@ -624,7 +762,7 @@ class AnthropicStreamTranslator {
     this.send('message_delta', {
       type: 'message_delta',
       delta: { stop_reason: this.stopReason, stop_sequence: null },
-      usage: buildAnthropicUsage(u),
+      usage: buildAnthropicUsage(u, { reportedUsageBasis: this.reportedUsageBasis }),
     });
     this.send('message_stop', { type: 'message_stop' });
   }
@@ -733,6 +871,7 @@ export async function handleMessages(body, context = {}) {
   const msgId = genMsgId();
   const requestedModel = body.model || 'claude-sonnet-4.6';
   const wantStream = !!body.stream;
+  const reportedUsageBasis = buildClientReportedUsageBasis(body);
   const openaiBody = anthropicToOpenAI(body);
   const chatHandler = context.handleChatCompletions || handleChatCompletions;
   // Augment callerKey with the per-user tag from metadata.user_id when
@@ -763,7 +902,10 @@ export async function handleMessages(body, context = {}) {
         },
       };
     }
-    return { status: 200, body: openAIToAnthropic(result.body, requestedModel, msgId) };
+    return {
+      status: 200,
+      body: openAIToAnthropic(result.body, requestedModel, msgId, { reportedUsageBasis }),
+    };
   }
 
   // Streaming path — ask handleChatCompletions for its streaming handler and
@@ -800,7 +942,7 @@ export async function handleMessages(body, context = {}) {
       'X-Accel-Buffering': 'no',
     },
     async handler(realRes) {
-      const translator = new AnthropicStreamTranslator(realRes, msgId, requestedModel);
+      const translator = new AnthropicStreamTranslator(realRes, msgId, requestedModel, { reportedUsageBasis });
       const captureRes = createCaptureRes(translator, realRes);
 
       // Forward client disconnect so the upstream cascade is cancelled.
