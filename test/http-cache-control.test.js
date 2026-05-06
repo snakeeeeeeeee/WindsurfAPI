@@ -24,7 +24,23 @@ describe('HTTP Cache-Control: no-store on per-request responses (issue #97)', ()
     const helper = src.match(/function json\(res, status, body\) \{[\s\S]*?\n\}/);
     assert.ok(helper, 'json() helper not found');
     assert.match(helper[0], /'Cache-Control':\s*'no-store'/, 'json() must set Cache-Control: no-store');
+    assert.match(helper[0], /x-api-key/);
+    assert.match(helper[0], /anthropic-version/);
     assert.doesNotMatch(helper[0], /'Cache-Control':\s*'no-cache'/, 'json() must not use no-cache (cacheable by spec)');
+  });
+
+  it('/v1/messages route sets Anthropic request id headers consistently', () => {
+    const src = readSrc('src/server.js');
+    const helper = src.match(/function setAnthropicHeaders\(res, model = '', requestId = 'req-' \+ randomUUID\(\)\) \{[\s\S]*?\n\}/);
+    assert.ok(helper, 'setAnthropicHeaders helper not found');
+    assert.match(helper[0], /'request-id'/);
+    assert.match(helper[0], /'x-request-id'/);
+    const routeBlock = src.match(/if \(path === '\/v1\/messages' && method === 'POST'\) \{[\s\S]*?return;\n  \}/);
+    assert.ok(routeBlock, '/v1/messages route block not found');
+    assert.match(routeBlock[0], /setAnthropicHeaders\(res, '', requestId\)/);
+    assert.match(routeBlock[0], /setAnthropicHeaders\(res, body\.model \|\| '', requestId\)/);
+    assert.match(routeBlock[0], /'request-id': requestId/);
+    assert.match(routeBlock[0], /'x-request-id': requestId/);
   });
 
   it('chat.js stream headers set Cache-Control: no-store', () => {

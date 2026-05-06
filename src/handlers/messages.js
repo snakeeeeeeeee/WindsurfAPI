@@ -358,8 +358,11 @@ export function openAIToAnthropic(result, model, msgId) {
         input,
       });
     }
-  } else {
-    content.push({ type: 'text', text: choice?.message?.content || '' });
+  } else if (choice?.message?.content) {
+    content.push({ type: 'text', text: choice.message.content });
+  }
+  if (!content.length) {
+    content.push({ type: 'text', text: '' });
   }
   const stopMap = { stop: 'end_turn', length: 'max_tokens', tool_calls: 'tool_use' };
   return {

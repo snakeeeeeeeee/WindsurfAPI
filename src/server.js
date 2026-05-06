@@ -83,7 +83,7 @@ function json(res, status, body) {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version',
     // Per-request dynamic responses must not be cached by intermediaries.
     // Some upstream aggregators (e.g. sub2api, #97) priority-cache responses
     // when they don't see an explicit Cache-Control directive and serve
@@ -91,6 +91,12 @@ function json(res, status, body) {
     'Cache-Control': 'no-store',
   });
   res.end(data);
+}
+
+function setAnthropicHeaders(res, model = '', requestId = 'req-' + randomUUID()) {
+  res.setHeader('request-id', requestId);
+  res.setHeader('x-request-id', requestId);
+  res.setHeader('anthropic-model', model || '');
 }
 
 async function route(req, res) {
@@ -392,6 +398,8 @@ async function route(req, res) {
 
   // Anthropic Messages API — Claude Code compatibility
   if (path === '/v1/messages' && method === 'POST') {
+    const requestId = 'req-' + randomUUID();
+    setAnthropicHeaders(res, '', requestId);
     if (!isAuthenticated()) {
       return json(res, 503, { type: 'error', error: { type: 'api_error', message: 'No active accounts' } });
     }
@@ -402,9 +410,11 @@ async function route(req, res) {
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'messages must be a non-empty array' } });
     }
+    setAnthropicHeaders(res, body.model || '', requestId);
     const result = await handleMessages(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
     const anthropicHeaders = {
-      'request-id': 'req-' + randomUUID(),
+      'request-id': requestId,
+      'x-request-id': requestId,
       'anthropic-model': body.model || '',
     };
     if (result.stream) {

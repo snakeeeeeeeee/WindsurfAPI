@@ -84,6 +84,31 @@ describe('Anthropic messages request translation', () => {
     assert.equal(result.body.content[1].text, 'done');
   });
 
+  it('does not add an empty text block for reasoning-only non-stream responses', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      thinking: { type: 'enabled', budget_tokens: 64 },
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          body: {
+            choices: [{
+              index: 0,
+              message: { role: 'assistant', reasoning_content: 'plan', content: '' },
+              finish_reason: 'stop',
+            }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body.content, [{ type: 'thinking', thinking: 'plan' }]);
+  });
+
   it('maps Anthropic tool_choice variants to OpenAI shapes', async () => {
     const cases = [
       { input: { type: 'auto' }, expected: 'auto' },
