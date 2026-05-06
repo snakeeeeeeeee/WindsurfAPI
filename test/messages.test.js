@@ -669,6 +669,67 @@ describe('Anthropic messages request translation', () => {
     }
   });
 
+  it('finds an official cache hit from the previous prefix when later cache breakpoints keep growing', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+    const prevTailRatio = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'official';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO = '0.15';
+    try {
+      const stableSystem = 'Stable benchmark harness instructions. '.repeat(120);
+      const firstPayload = 'R1 stable user payload. '.repeat(120);
+      const requestForRound = (round) => ({
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: stableSystem }],
+        messages: round === 1
+          ? [{
+              role: 'user',
+              content: [{ type: 'text', text: firstPayload, cache_control: { type: 'ephemeral' } }],
+            }]
+          : [
+              { role: 'user', content: [{ type: 'text', text: firstPayload }] },
+              { role: 'assistant', content: 'round one answer' },
+              {
+                role: 'user',
+                content: [{ type: 'text', text: 'R2 appended audit payload. '.repeat(80), cache_control: { type: 'ephemeral' } }],
+              },
+            ],
+      });
+      const context = {
+        callerKey: 'api:growing-key',
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: { prompt_tokens: 100000, completion_tokens: 10000, total_tokens: 110000 },
+            },
+          };
+        },
+      };
+
+      const first = await handleMessages(requestForRound(1), context);
+      const second = await handleMessages(requestForRound(2), context);
+
+      assert.equal(first.body.usage.cache_read_input_tokens, 0);
+      assert.ok(first.body.usage.cache_creation_input_tokens > 0);
+      assert.ok(second.body.usage.cache_read_input_tokens > 0);
+      assert.equal(second.body.usage.cache_read_input_tokens, first.body.usage.cache_creation_input_tokens);
+      assert.equal(
+        second.body.usage.cache_creation_input_tokens,
+        Math.ceil(second.body.usage.cache_read_input_tokens * 0.15),
+      );
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
+      if (prevTailRatio === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO = prevTailRatio;
+    }
+  });
+
   it('drops Anthropic server-side tool types (advisor / web_search / code_execution) before forwarding', async () => {
     let capturedBody = null;
     await handleMessages({

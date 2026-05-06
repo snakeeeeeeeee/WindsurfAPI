@@ -309,23 +309,44 @@ function estimateMessageTokens(message) {
   return 4 + estimateAnthropicContentTokens(message?.content);
 }
 
+const ANTHROPIC_CACHE_PREFIX_LOOKBACK_BLOCKS = 20;
+
 function extractAnthropicCacheBreakpoints(body) {
   const segments = [];
+  const boundaries = [];
   let parts = [];
   let tokens = 0;
 
-  const addPart = (kind, value, tokenCount) => {
+  const prefixAtCurrentBoundary = () => ({
+    tokens: Math.max(1, tokens),
+    hash: sha256Hex(parts.join('\n')),
+    blockIndex: boundaries.length,
+  });
+  const addBoundary = () => {
+    if (!parts.length) return null;
+    const boundary = prefixAtCurrentBoundary();
+    boundary.blockIndex = boundaries.length + 1;
+    boundaries.push(boundary);
+    return boundary;
+  };
+  const addPart = (kind, value, tokenCount, { boundary = true } = {}) => {
     const canonical = canonicalCacheSegment({ kind, value });
     parts.push(canonical);
     tokens += tokenCount;
+    if (boundary) addBoundary();
     return canonical;
   };
   const pushBreakpoint = (ttl) => {
     if (!parts.length) return;
+    const exact = boundaries[boundaries.length - 1] || prefixAtCurrentBoundary();
+    const previousStart = Math.max(0, boundaries.length - 1 - ANTHROPIC_CACHE_PREFIX_LOOKBACK_BLOCKS);
+    const previous = boundaries.slice(previousStart, Math.max(0, boundaries.length - 1));
     segments.push({
       ttl: ttl === '1h' ? '1h' : '5m',
-      tokens: Math.max(1, tokens),
-      hash: sha256Hex(parts.join('\n')),
+      tokens: exact.tokens,
+      hash: exact.hash,
+      blockIndex: exact.blockIndex,
+      hitCandidates: [...previous, exact],
     });
   };
   const maybeBreakpoint = (value) => {
@@ -352,7 +373,7 @@ function extractAnthropicCacheBreakpoints(body) {
   if (Array.isArray(body?.messages)) {
     for (const message of body.messages) {
       if (Array.isArray(message?.content)) {
-        addPart('message_role', { role: message.role }, 4);
+        addPart('message_role', { role: message.role }, 4, { boundary: false });
         for (const block of message.content) {
           const tokenCount = estimateAnthropicContentTokens([block]);
           addPart('message_block', { role: message.role, content: stripCacheControlForHash(block) }, tokenCount);
@@ -412,10 +433,15 @@ function buildOfficialReportedUsageBasis(body, context = {}) {
   let bestHit = null;
 
   for (const bp of breakpoints) {
-    const key = `${scope}|${bp.ttl}|${bp.hash}`;
-    const hit = reportedAnthropicCacheEntries.get(key);
-    if (hit && hit.expiresAt > now && (!bestHit || hit.tokens > bestHit.tokens)) {
-      bestHit = { ...hit, key, ttl: bp.ttl };
+    const candidates = Array.isArray(bp.hitCandidates) && bp.hitCandidates.length
+      ? bp.hitCandidates
+      : [bp];
+    for (const candidate of candidates) {
+      const key = `${scope}|${bp.ttl}|${candidate.hash}`;
+      const hit = reportedAnthropicCacheEntries.get(key);
+      if (hit && hit.expiresAt > now && (!bestHit || hit.tokens > bestHit.tokens)) {
+        bestHit = { ...hit, key, ttl: bp.ttl };
+      }
     }
   }
 
