@@ -616,6 +616,59 @@ describe('Anthropic messages request translation', () => {
     }
   });
 
+  it('caps official cache creation to one conservative tail after a prefix hit', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+    const prevTailRatio = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'official';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO = '10%';
+    try {
+      const firstRequest = {
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: 'Stable cached prefix that should be reused.', cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: 'turn one' }],
+      };
+      const secondRequest = {
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: 'Stable cached prefix that should be reused.', cache_control: { type: 'ephemeral' } }],
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: 'new tail A '.repeat(200), cache_control: { type: 'ephemeral' } },
+            { type: 'text', text: 'new tail B '.repeat(200), cache_control: { type: 'ephemeral' } },
+          ],
+        }],
+      };
+      const context = {
+        callerKey: 'api:tail-key',
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: { prompt_tokens: 100000, completion_tokens: 10000, total_tokens: 110000 },
+            },
+          };
+        },
+      };
+
+      const first = await handleMessages(structuredClone(firstRequest), context);
+      const second = await handleMessages(structuredClone(secondRequest), context);
+      const expectedRead = first.body.usage.cache_creation_input_tokens;
+      assert.equal(second.body.usage.cache_read_input_tokens, expectedRead);
+      assert.equal(second.body.usage.cache_creation_input_tokens, Math.ceil(expectedRead * 0.1));
+      assert.ok(second.body.usage.cache_creation_input_tokens < expectedRead);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
+      if (prevTailRatio === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO = prevTailRatio;
+    }
+  });
+
   it('drops Anthropic server-side tool types (advisor / web_search / code_execution) before forwarding', async () => {
     let capturedBody = null;
     await handleMessages({

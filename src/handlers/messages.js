@@ -64,6 +64,15 @@ function reportedAnthropicCacheMaxEntries() {
   return Math.max(100, Math.min(1000000, Math.floor(n)));
 }
 
+function reportedAnthropicCacheCreationTailRatio() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO || '').trim();
+  if (!raw) return 0.15;
+  let n = Number(raw.replace(/%$/, ''));
+  if (!Number.isFinite(n) || n < 0) return 0.15;
+  if (n > 1) n = n / 100;
+  return Math.max(0, Math.min(1, n));
+}
+
 function reportedAnthropicFreshInputTokens() {
   const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS || '').trim();
   if (!raw) return null;
@@ -418,16 +427,28 @@ function buildOfficialReportedUsageBasis(body, context = {}) {
     });
   }
 
-  for (const bp of breakpoints) {
-    if (bp.tokens <= cacheRead) continue;
-    const key = `${scope}|${bp.ttl}|${bp.hash}`;
-    const existing = reportedAnthropicCacheEntries.get(key);
-    if (existing && existing.expiresAt > now) continue;
-    const createTokens = Math.max(0, bp.tokens - cacheRead);
+  const creationCandidates = breakpoints
+    .filter(bp => bp.tokens > cacheRead)
+    .map(bp => {
+      const key = `${scope}|${bp.ttl}|${bp.hash}`;
+      const existing = reportedAnthropicCacheEntries.get(key);
+      return { ...bp, key, existing };
+    })
+    .filter(bp => !(bp.existing && bp.existing.expiresAt > now));
+  const selectedCreation = creationCandidates.length
+    ? creationCandidates.reduce((best, bp) => (bp.tokens > best.tokens ? bp : best), creationCandidates[0])
+    : null;
+  if (selectedCreation) {
+    const bp = selectedCreation;
+    const uncachedTail = Math.max(0, bp.tokens - cacheRead);
+    const tailCap = cacheRead > 0
+      ? Math.max(1, Math.ceil(cacheRead * reportedAnthropicCacheCreationTailRatio()))
+      : uncachedTail;
+    const createTokens = Math.min(uncachedTail, tailCap);
     cacheCreation += createTokens;
     if (bp.ttl === '1h') cacheCreation1h += createTokens;
     else cacheCreation5m += createTokens;
-    reportedAnthropicCacheEntries.set(key, {
+    reportedAnthropicCacheEntries.set(bp.key, {
       tokens: bp.tokens,
       expiresAt: now + cacheTtlMs(bp.ttl),
       lastSeenAt: now,
