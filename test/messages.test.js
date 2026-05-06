@@ -325,6 +325,56 @@ describe('Anthropic messages request translation', () => {
     assert.equal(capturedContext.callerKey, 'api:abc123');
   });
 
+  it('reports Anthropic cache buckets with tiny fresh input when enabled', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+    const prevRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = '80';
+    try {
+      let capturedBody = null;
+      const result = await handleMessages({
+        model: 'claude-sonnet-4.6',
+        messages: [{ role: 'user', content: 'hi' }],
+      }, {
+        async handleChatCompletions(body) {
+          capturedBody = body;
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: {
+                prompt_tokens: 1000,
+                completion_tokens: 260,
+                total_tokens: 1260,
+                prompt_tokens_details: { cached_tokens: 0 },
+                cache_creation_input_tokens: 27639,
+                cache_creation: { ephemeral_5m_input_tokens: 27639, ephemeral_1h_input_tokens: 0 },
+              },
+            },
+          };
+        },
+      });
+      assert.equal(capturedBody.__skipReportedUsageOverrides, true);
+      assert.equal(result.body.usage.input_tokens, 1);
+      assert.equal(result.body.usage.cache_read_input_tokens, 110561);
+      assert.equal(result.body.usage.cache_creation_input_tokens, 27639);
+      assert.deepEqual(result.body.usage.cache_creation, {
+        ephemeral_5m_input_tokens: 27639,
+        ephemeral_1h_input_tokens: 0,
+      });
+      assert.equal(result.body.usage.output_tokens, 260);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
+      if (prevRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = prevRate;
+    }
+  });
+
   it('drops Anthropic server-side tool types (advisor / web_search / code_execution) before forwarding', async () => {
     let capturedBody = null;
     await handleMessages({
@@ -446,6 +496,63 @@ describe('Anthropic messages request translation', () => {
       .map(e => e.data.delta.partial_json)
       .join('');
     assert.equal(partialJson, '{"file_path":"package.json"}');
+  });
+
+  it('reports Anthropic cache buckets on streaming terminal usage when enabled', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+    const prevRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = '0.8';
+    try {
+      let capturedBody = null;
+      const result = await handleMessages({
+        model: 'claude-sonnet-4.6',
+        stream: true,
+        messages: [{ role: 'user', content: 'hi' }],
+      }, {
+        async handleChatCompletions(body) {
+          capturedBody = body;
+          return {
+            status: 200,
+            stream: true,
+            async handler(res) {
+              res.write(chatChunk({ choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: null }] }));
+              res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }));
+              res.write(chatChunk({
+                choices: [],
+                usage: {
+                  prompt_tokens: 1000,
+                  completion_tokens: 260,
+                  total_tokens: 1260,
+                  prompt_tokens_details: { cached_tokens: 0 },
+                  cache_creation_input_tokens: 100,
+                },
+              }));
+              res.end('data: [DONE]\n\n');
+            },
+          };
+        },
+      });
+
+      const res = fakeRes();
+      await result.handler(res);
+      const events = parseAnthropicEvents(res.body);
+      const delta = events.find(e => e.event === 'message_delta');
+      assert.equal(capturedBody.__skipReportedUsageOverrides, true);
+      assert.equal(delta.data.usage.input_tokens, 1);
+      assert.equal(delta.data.usage.cache_read_input_tokens, 800);
+      assert.equal(delta.data.usage.cache_creation_input_tokens, 100);
+      assert.equal(delta.data.usage.output_tokens, 260);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
+      if (prevRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = prevRate;
+    }
   });
 
   it('preserves thinking.type=adaptive (Claude Code 2.x sonnet default) when forwarding', async () => {

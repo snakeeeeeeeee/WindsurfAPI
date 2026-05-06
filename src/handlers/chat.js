@@ -984,10 +984,10 @@ function estimateTokens(messages) {
   return Math.max(1, Math.ceil(chars / 4));
 }
 
-function cachedUsage(messages, completionText) {
+function cachedUsage(messages, completionText, opts = {}) {
   const prompt = estimateTokens(messages);
   const completion = Math.max(1, Math.ceil((completionText || '').length / 4));
-  return {
+  const usage = {
     prompt_tokens: prompt,
     completion_tokens: completion,
     total_tokens: prompt + completion,
@@ -997,6 +997,7 @@ function cachedUsage(messages, completionText) {
     completion_tokens_details: { reasoning_tokens: 0 },
     cached: true,
   };
+  return opts.skipReportedUsageOverrides ? usage : applyReportedUsageOverrides(usage);
 }
 
 export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts = {}) {
@@ -1072,7 +1073,71 @@ function ttlHintFromCachePolicy(cachePolicy) {
   return 90 * 60 * 1000;
 }
 
-export function buildUsageBody(serverUsage, messages, completionText, thinkingText = '', cachePolicy = null) {
+function reportedCacheHitRate() {
+  const raw = String(process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE || '').trim();
+  if (!raw) return 0;
+  let n = Number(raw.replace(/%$/, ''));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n > 1) n = n / 100;
+  if (n <= 0) return 0;
+  return Math.min(1, n);
+}
+
+function reportedInputTokens() {
+  const raw = String(process.env.WINDSURFAPI_REPORTED_INPUT_TOKENS || '').trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
+export function applyReportedUsageOverrides(usage, opts = {}) {
+  if (!usage || typeof usage !== 'object') return usage;
+
+  const inputOverride = reportedInputTokens();
+  const rate = reportedCacheHitRate();
+  const reportingConfigured = inputOverride !== null || rate > 0;
+  const originalPrompt = Number(usage.prompt_tokens || usage.input_tokens || 0);
+  const output = Number(usage.completion_tokens || usage.output_tokens || 0) || 0;
+  const cacheWrite = Number(usage.cache_creation_input_tokens || usage.cascade_breakdown?.cache_write_tokens || 0) || 0;
+  const preserveWriteBilling = reportingConfigured && (cacheWrite > 0 || opts.preserveInputTokens);
+
+  let prompt = originalPrompt;
+  if (preserveWriteBilling) prompt = originalPrompt + cacheWrite;
+  else if (inputOverride !== null) prompt = inputOverride;
+  if (!Number.isFinite(prompt) || prompt <= 0) return usage;
+
+  const originalCached = Number(usage.prompt_tokens_details?.cached_tokens || usage.cache_read_input_tokens || 0);
+  const cached = rate && !preserveWriteBilling
+    ? Math.min(prompt, Math.max(0, Math.ceil(prompt * rate)))
+    : Math.min(prompt, Math.max(0, Number.isFinite(originalCached) ? Math.floor(originalCached) : 0));
+  const fresh = preserveWriteBilling ? Math.max(0, originalPrompt - cached) : Math.max(0, prompt - cached);
+
+  usage.prompt_tokens = prompt;
+  usage.input_tokens = prompt;
+  usage.prompt_tokens_details = {
+    ...(usage.prompt_tokens_details || {}),
+    cached_tokens: cached,
+  };
+  if (preserveWriteBilling) {
+    usage.prompt_tokens_details.cached_creation_tokens = cacheWrite;
+  }
+  usage.cache_read_input_tokens = cached;
+
+  if (usage.cascade_breakdown && typeof usage.cascade_breakdown === 'object') {
+    usage.cascade_breakdown = {
+      ...usage.cascade_breakdown,
+      fresh_input_tokens: fresh,
+      cache_read_tokens: cached,
+    };
+  }
+
+  usage.total_tokens = prompt + output + (preserveWriteBilling ? 0 : cacheWrite);
+
+  return usage;
+}
+
+export function buildUsageBody(serverUsage, messages, completionText, thinkingText = '', cachePolicy = null, opts = {}) {
   if (serverUsage && (serverUsage.inputTokens || serverUsage.outputTokens)) {
     const inputTokens = serverUsage.inputTokens || 0;
     const outputTokens = serverUsage.outputTokens || 0;
@@ -1101,7 +1166,7 @@ export function buildUsageBody(serverUsage, messages, completionText, thinkingTe
       ephemeral_5m_input_tokens: cachePolicy?.has1h ? 0 : cacheWrite,
       ephemeral_1h_input_tokens: cachePolicy?.has1h ? cacheWrite : 0,
     };
-    return {
+    const usage = {
       prompt_tokens: promptTokens,
       completion_tokens: outputTokens,
       total_tokens: totalTokens,
@@ -1123,10 +1188,13 @@ export function buildUsageBody(serverUsage, messages, completionText, thinkingTe
         output_tokens: outputTokens,
       },
     };
+    return opts.skipReportedUsageOverrides
+      ? usage
+      : applyReportedUsageOverrides(usage, { preserveInputTokens: cachePolicy?.breakpointCount > 0 });
   }
   const prompt = estimateTokens(messages);
   const completion = Math.max(1, Math.ceil(((completionText || '').length + (thinkingText || '').length) / 4));
-  return {
+  const usage = {
     prompt_tokens: prompt,
     completion_tokens: completion,
     total_tokens: prompt + completion,
@@ -1135,6 +1203,7 @@ export function buildUsageBody(serverUsage, messages, completionText, thinkingTe
     prompt_tokens_details: { cached_tokens: 0 },
     completion_tokens_details: { reasoning_tokens: 0 },
   };
+  return opts.skipReportedUsageOverrides ? usage : applyReportedUsageOverrides(usage);
 }
 
 // Wait until getApiKey returns a non-null account, or until maxWaitMs expires.
@@ -1745,15 +1814,16 @@ async function _handleChatCompletionsInner(body, context = {}) {
       wantJson,
       callerKey,
       {
-      checkMessageRateLimit: checkMessageRateLimitFn,
-      waitForAccount: waitForAccountFn,
-      cachePolicy,
-      wantThinking,
-      fpOpts: buildReuseOpts({ tools, toolChoice: tool_choice, toolPreamble, preambleTier, emulateTools, route: body.__route || 'chat' }),
-      tools,
-      route: body.__route || 'chat',
-      nativeOpts,
-    });
+        checkMessageRateLimit: checkMessageRateLimitFn,
+        waitForAccount: waitForAccountFn,
+        cachePolicy,
+        wantThinking,
+        fpOpts: buildReuseOpts({ tools, toolChoice: tool_choice, toolPreamble, preambleTier, emulateTools, route: body.__route || 'chat' }),
+        tools,
+        route: body.__route || 'chat',
+        nativeOpts,
+        skipReportedUsageOverrides: !!body.__skipReportedUsageOverrides,
+      });
   }
 
   // ── Local response cache (exact body match) ─────────────
@@ -1768,7 +1838,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       body: {
         id: chatId, object: 'chat.completion', created, model: displayModel,
         choices: [{ index: 0, message, finish_reason: 'stop' }],
-        usage: cachedUsage(messages, cached.text),
+        usage: cachedUsage(messages, cached.text, { skipReportedUsageOverrides: body.__skipReportedUsageOverrides }),
       },
     };
   }
@@ -1970,6 +2040,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // next identical original-model request hits cache instead of
       // re-burning the rate-limit + fallback cycle.
       context.__originalCkey || null,
+      { skipReportedUsageOverrides: !!body.__skipReportedUsageOverrides },
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
@@ -2097,7 +2168,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null, aliasCkey = null) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null, aliasCkey = null, opts = {}) {
   const startTime = Date.now();
   const nativeBridgeOn = !!nativeOpts?.enabled;
   try {
@@ -2462,7 +2533,9 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // threaded through as its own parameter rather than via poolCtx so that
     // non-reuse requests with `cache_control: { ttl: '1h' }` still attribute
     // their tokens to ephemeral_1h_input_tokens correctly (see #82, #83).
-    const usage = buildUsageBody(serverUsage, messages, allText, allThinking, cachePolicy);
+    const usage = buildUsageBody(serverUsage, messages, allText, allThinking, cachePolicy, {
+      skipReportedUsageOverrides: route === 'messages' && opts.skipReportedUsageOverrides,
+    });
     // v2.0.69 (#118): feed bucket totals into stats so dashboard can show
     // fresh_input vs cache_read vs cache_write breakdown.
     try { recordTokenUsage(usage); } catch {}
@@ -2650,7 +2723,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           send({ id, object: 'chat.completion.chunk', created, model,
             choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
           send({ id, object: 'chat.completion.chunk', created, model,
-            choices: [], usage: cachedUsage(messages, cached.text) });
+            choices: [], usage: cachedUsage(messages, cached.text, { skipReportedUsageOverrides: deps.skipReportedUsageOverrides }) });
           if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
         } finally {
           unregisterSse();
@@ -3176,7 +3249,9 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             send({ id, object: 'chat.completion.chunk', created, model,
               choices: [{ index: 0, delta: {}, finish_reason: finalReason }] });
             {
-              const usage = buildUsageBody(cascadeResult?.usage || null, messages, accText, accThinking, cachePolicy);
+              const usage = buildUsageBody(cascadeResult?.usage || null, messages, accText, accThinking, cachePolicy, {
+                skipReportedUsageOverrides: deps.skipReportedUsageOverrides,
+              });
               try { recordTokenUsage(usage); } catch {}
               send({ id, object: 'chat.completion.chunk', created, model,
                 choices: [], usage });

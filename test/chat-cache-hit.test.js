@@ -79,6 +79,7 @@ describe('chat cache-hit stream shape', () => {
       total_tokens: 5,
       input_tokens: 1,
       output_tokens: 4,
+      cache_read_input_tokens: 1,
       prompt_tokens_details: { cached_tokens: 1 },
       completion_tokens_details: { reasoning_tokens: 0 },
     });

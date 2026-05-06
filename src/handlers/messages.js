@@ -37,6 +37,28 @@ function sha256Hex(value) {
   return createHash('sha256').update(String(value || '')).digest('hex');
 }
 
+function anthropicReportedCacheBucketsEnabled() {
+  return process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS === '1';
+}
+
+function reportedAnthropicFreshInputTokens() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS || '').trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
+function reportedAnthropicCacheHitRate() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE || '').trim();
+  if (!raw) return 0;
+  let n = Number(raw.replace(/%$/, ''));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n > 1) n = n / 100;
+  if (n <= 0) return 0;
+  return Math.min(1, n);
+}
+
 // Real Claude Code 2.1.120 traffic carries metadata.user_id as a
 // JSON-encoded string with shape {device_id, account_uuid, session_id}.
 // Older Anthropic SDK clients send a plain string. The proxy currently
@@ -351,12 +373,44 @@ function buildAnthropicUsage(usage) {
   // subset. Negative values clamp to 0 (defensive against upstream skew).
   const promptTotal = usage.prompt_tokens ?? usage.input_tokens ?? 0;
   const freshInput = Math.max(0, promptTotal - cacheRead);
-  return {
+  const anthropicUsage = {
     input_tokens: freshInput,
     output_tokens: usage.completion_tokens || usage.output_tokens || 0,
     cache_creation_input_tokens: cacheCreationFlat,
     cache_read_input_tokens: cacheRead,
     cache_creation: split,
+  };
+  return applyAnthropicReportedCacheBuckets(anthropicUsage, {
+    promptTotal,
+    cacheRead,
+  });
+}
+
+function applyAnthropicReportedCacheBuckets(anthropicUsage, { promptTotal = 0, cacheRead = 0 } = {}) {
+  if (!anthropicReportedCacheBucketsEnabled()) return anthropicUsage;
+
+  const freshOverride = reportedAnthropicFreshInputTokens();
+  const rate = reportedAnthropicCacheHitRate();
+  const reportedFresh = freshOverride === null ? anthropicUsage.input_tokens : freshOverride;
+  const cacheCreation = Number(anthropicUsage.cache_creation_input_tokens) || 0;
+  const baseTotal = Math.max(
+    Number(promptTotal) || 0,
+    (Number(anthropicUsage.input_tokens) || 0) + (Number(cacheRead) || 0),
+  );
+  const rateCacheRead = rate > 0 ? Math.ceil(baseTotal * rate) : 0;
+  const visibleRateCacheRead = rate > 0 && rate < 1
+    ? Math.ceil((rate * (reportedFresh + cacheCreation)) / (1 - rate))
+    : 0;
+  const reportedCacheRead = Math.max(
+    Number(anthropicUsage.cache_read_input_tokens) || 0,
+    rateCacheRead,
+    visibleRateCacheRead,
+  );
+
+  return {
+    ...anthropicUsage,
+    input_tokens: reportedFresh,
+    cache_read_input_tokens: reportedCacheRead,
   };
 }
 
@@ -650,7 +704,12 @@ export async function handleMessages(body, context = {}) {
     : context;
 
   if (!wantStream) {
-    const result = await chatHandler({ ...openaiBody, stream: false, __route: 'messages' }, effectiveContext);
+    const result = await chatHandler({
+      ...openaiBody,
+      stream: false,
+      __route: 'messages',
+      __skipReportedUsageOverrides: anthropicReportedCacheBucketsEnabled(),
+    }, effectiveContext);
     if (result.status !== 200) {
       return {
         status: result.status,
@@ -669,7 +728,12 @@ export async function handleMessages(body, context = {}) {
   // Streaming path — ask handleChatCompletions for its streaming handler and
   // point its writes at our translator shim. This lets the upstream Cascade
   // poll loop drive the downstream SSE in real time — no buffer-then-replay.
-  const streamResult = await chatHandler({ ...openaiBody, stream: true, __route: 'messages' }, effectiveContext);
+  const streamResult = await chatHandler({
+    ...openaiBody,
+    stream: true,
+    __route: 'messages',
+    __skipReportedUsageOverrides: anthropicReportedCacheBucketsEnabled(),
+  }, effectiveContext);
 
   if (!streamResult.stream) {
     // The OpenAI path returned a non-stream error (e.g. 403 model_not_entitled)

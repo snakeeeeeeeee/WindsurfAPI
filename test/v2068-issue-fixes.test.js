@@ -113,6 +113,94 @@ describe('#118 — buildUsageBody no longer inflates prompt_tokens with cache_wr
     assert.equal(usage5m.cache_creation.ephemeral_5m_input_tokens, 200);
     assert.equal(usage5m.cache_creation.ephemeral_1h_input_tokens, 0);
   });
+
+  it('preserves cache-write billing when report overrides are configured', () => {
+    const previous = process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE;
+    process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE = '80';
+    try {
+      const usage = buildUsageBody(
+        { inputTokens: 1000, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 25 },
+        [], 'x', '', null,
+      );
+      assert.equal(usage.prompt_tokens, 1025);
+      assert.equal(usage.input_tokens, 1025);
+      assert.equal(usage.prompt_tokens_details.cached_tokens, 0);
+      assert.equal(usage.prompt_tokens_details.cached_creation_tokens, 25);
+      assert.equal(usage.cache_read_input_tokens, 0);
+      assert.equal(usage.cascade_breakdown.fresh_input_tokens, 1000);
+      assert.equal(usage.cascade_breakdown.cache_read_tokens, 0);
+      assert.equal(usage.cache_creation_input_tokens, 25);
+      assert.equal(usage.total_tokens, 1075);
+    } finally {
+      if (previous === undefined) delete process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE;
+      else process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE = previous;
+    }
+  });
+
+  it('preserves input tokens on cache-control write turns even if upstream omits cache_write', () => {
+    const prevRate = process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE;
+    const prevInput = process.env.WINDSURFAPI_REPORTED_INPUT_TOKENS;
+    process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE = '0.8';
+    process.env.WINDSURFAPI_REPORTED_INPUT_TOKENS = '1';
+    try {
+      const usage = buildUsageBody(
+        { inputTokens: 1000, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        [], 'x', '', { breakpointCount: 1 },
+      );
+      assert.equal(usage.prompt_tokens, 1000);
+      assert.equal(usage.input_tokens, 1000);
+      assert.equal(usage.prompt_tokens_details.cached_tokens, 0);
+      assert.equal(usage.total_tokens, 1050);
+    } finally {
+      if (prevRate === undefined) delete process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE;
+      else process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE = prevRate;
+      if (prevInput === undefined) delete process.env.WINDSURFAPI_REPORTED_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_REPORTED_INPUT_TOKENS = prevInput;
+    }
+  });
+
+  it('can override reported cache hit rate after cache-write turns', () => {
+    const previous = process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE;
+    process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE = '80';
+    try {
+      const usage = buildUsageBody(
+        { inputTokens: 1000, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        [], 'x', '', null,
+      );
+      assert.equal(usage.prompt_tokens, 1000);
+      assert.equal(usage.prompt_tokens_details.cached_tokens, 800);
+      assert.equal(usage.cache_read_input_tokens, 800);
+      assert.equal(usage.cascade_breakdown.fresh_input_tokens, 200);
+      assert.equal(usage.cascade_breakdown.cache_read_tokens, 800);
+      assert.equal(usage.total_tokens, 1050);
+    } finally {
+      if (previous === undefined) delete process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE;
+      else process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE = previous;
+    }
+  });
+
+  it('can override reported input tokens independently', () => {
+    const prevRate = process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE;
+    const prevInput = process.env.WINDSURFAPI_REPORTED_INPUT_TOKENS;
+    process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE = '0.8';
+    process.env.WINDSURFAPI_REPORTED_INPUT_TOKENS = '1';
+    try {
+      const usage = buildUsageBody(
+        { inputTokens: 1000, outputTokens: 160, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        [], 'x', '', null,
+      );
+      assert.equal(usage.prompt_tokens, 1);
+      assert.equal(usage.input_tokens, 1);
+      assert.equal(usage.prompt_tokens_details.cached_tokens, 1);
+      assert.equal(usage.cache_read_input_tokens, 1);
+      assert.equal(usage.total_tokens, 161);
+    } finally {
+      if (prevRate === undefined) delete process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE;
+      else process.env.WINDSURFAPI_REPORTED_CACHE_HIT_RATE = prevRate;
+      if (prevInput === undefined) delete process.env.WINDSURFAPI_REPORTED_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_REPORTED_INPUT_TOKENS = prevInput;
+    }
+  });
 });
 
 describe('#119 — sticky-IP proxy username segregates LS instances under env flag', () => {
