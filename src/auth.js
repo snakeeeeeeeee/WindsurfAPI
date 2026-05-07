@@ -227,6 +227,10 @@ function saveAccounts() {
  */
 export function saveAccountsSync() {
   try {
+    if (accounts.length === 0 && getAccountsJson().length > 0) {
+      log.warn('Shutdown: skipped empty account flush because SQLite still has accounts');
+      return;
+    }
     replaceAccountsJson(_serializeAccounts());
   } catch (e) {
     log.error('Shutdown: failed to flush accounts:', e.message);
