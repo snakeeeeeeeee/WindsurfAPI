@@ -108,7 +108,7 @@ docker compose logs -f
 
 Default mounts:
 
-- `./.docker-data/data`: persisted `accounts.json`, `proxy.json`, `stats.json`, `runtime-config.json`, `model-access.json`, and `logs/`
+- `./.docker-data/data`: persisted `windsurfapi.sqlite`, legacy JSON backups, and `logs/`
 - `./.docker-data/opt/windsurf`: Language Server binary and its data directory
 - `./.docker-data/tmp/windsurf-workspace`: temporary workspace
 
@@ -255,7 +255,7 @@ In your client's settings for **Custom OpenAI Compatible**:
 |---|---|---|
 | `PORT` | `3003` | Service port |
 | `API_KEY` | empty | API key required for requests. Leave empty to disable validation. |
-| `DATA_DIR` | project root | Directory for persisted JSON state and `logs/`. Docker deployments should usually use `/data`. |
+| `DATA_DIR` | project root | Directory for the persisted SQLite database, legacy JSON backups, and `logs/`. Docker deployments should usually use `/data`. |
 | `CODEIUM_API_KEY` | empty | Direct API key from Windsurf (alternative to token-based auth). |
 | `CODEIUM_AUTH_TOKEN` | empty | Token from [windsurf.com/show-auth-token](https://windsurf.com/show-auth-token). |
 | `CODEIUM_EMAIL` | empty | Email for Windsurf account authentication. |

@@ -3,10 +3,10 @@
  * Supports proxy tunneling and fingerprint randomization.
  */
 
-import http from 'http';
 import https from 'https';
 import { log } from '../config.js';
 import { isSocks, createSocksTunnel } from '../socks.js';
+import { createHttpConnectTunnel } from '../proxy-test.js';
 
 const FIREBASE_API_KEY = 'AIzaSyDsOl-1XpT5err0Tcnx8FFod1H8gVGIycY';
 const FIREBASE_AUTH_URL = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`;
@@ -186,34 +186,7 @@ function buildJsonHeaders(fingerprint, body, extra = {}) {
 
 function createProxyTunnel(proxy, targetHost, targetPort) {
   if (isSocks(proxy)) return createSocksTunnel(proxy, targetHost, targetPort);
-  return new Promise((resolve, reject) => {
-    const proxyHost = proxy.host.replace(/:\d+$/, '');
-    const proxyPort = proxy.port || 8080;
-
-    const connectReq = http.request({
-      host: proxyHost,
-      port: proxyPort,
-      method: 'CONNECT',
-      path: `${targetHost}:${targetPort}`,
-      headers: {
-        Host: `${targetHost}:${targetPort}`,
-        ...(proxy.username ? { 'Proxy-Authorization': `Basic ${Buffer.from(`${proxy.username}:${proxy.password || ''}`).toString('base64')}` } : {}),
-      },
-    });
-
-    connectReq.on('connect', (res, socket) => {
-      if (res.statusCode === 200) {
-        resolve(socket);
-      } else {
-        socket.destroy();
-        reject(new Error(`Proxy CONNECT failed: ${res.statusCode}`));
-      }
-    });
-
-    connectReq.on('error', (err) => reject(new Error(`Proxy connection error: ${err.message}`)));
-    connectReq.setTimeout(15000, () => { connectReq.destroy(); reject(new Error('Proxy connection timeout')); });
-    connectReq.end();
-  });
+  return createHttpConnectTunnel(proxy, targetHost, targetPort, 15000);
 }
 
 // ─── HTTPS request with optional proxy ────────────────────

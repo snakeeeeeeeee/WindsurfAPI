@@ -3,12 +3,9 @@
  * Supports per-account and global HTTP proxy settings.
  */
 
-import { readFileSync, existsSync } from 'fs';
-import { writeJsonAtomic } from '../fs-atomic.js';
-import { join } from 'path';
-import { config, log } from '../config.js';
-
-const PROXY_FILE = join(config.dataDir, 'proxy.json');
+import { log } from '../config.js';
+import { getJson, setJson } from '../db.js';
+import { getActiveDynamicProxyForAccount } from '../dynamic-proxy.js';
 
 const _config = {
   global: null,       // { type, host, port, username, password }
@@ -17,18 +14,17 @@ const _config = {
 
 // Load
 try {
-  if (existsSync(PROXY_FILE)) {
-    Object.assign(_config, JSON.parse(readFileSync(PROXY_FILE, 'utf-8')));
-  }
+  const saved = getJson('proxy', 'config', null);
+  if (saved && typeof saved === 'object') Object.assign(_config, saved);
 } catch (e) {
-  log.error('Failed to load proxy.json:', e.message);
+  log.error('Failed to load proxy config from SQLite:', e.message);
 }
 
 function save() {
   try {
-    writeJsonAtomic(PROXY_FILE, _config);
+    setJson('proxy', 'config', _config);
   } catch (e) {
-    log.error('Failed to save proxy.json:', e.message);
+    log.error('Failed to save proxy config:', e.message);
   }
 }
 
@@ -100,10 +96,20 @@ export function removeProxy(scope, accountId) {
   save();
 }
 
+export function removeAccountProxy(accountId) {
+  if (!accountId || !_config.perAccount[accountId]) return false;
+  delete _config.perAccount[accountId];
+  save();
+  return true;
+}
+
 /**
- * Get effective proxy for an account (per-account takes priority over global).
+ * Get effective proxy for an account.
+ * Dynamic account binding wins, then manual per-account, then global.
  */
 export function getEffectiveProxy(accountId) {
+  const dynamicProxy = accountId ? getActiveDynamicProxyForAccount(accountId) : null;
+  if (dynamicProxy) return dynamicProxy;
   if (accountId && _config.perAccount[accountId]) {
     return _config.perAccount[accountId];
   }

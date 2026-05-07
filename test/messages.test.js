@@ -1,13 +1,41 @@
-import { afterEach, describe, it } from 'node:test';
+import { after, afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import { mkdirSync, mkdtempSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const testDataDir = mkdtempSync(join(tmpdir(), 'wfapi-messages-'));
+mkdirSync(testDataDir, { recursive: true });
+process.env.WINDSURFAPI_SQLITE_PATH = join(testDataDir, 'windsurfapi.sqlite');
+process.env.WINDSURFAPI_DB_IMPORT_JSON_ON_EMPTY = '0';
+process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '0';
+process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'upstream';
+process.env.WINDSURFAPI_ANTHROPIC_REPORTED_OUTPUT_BASIS = 'upstream';
+process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '__test_unset__';
+process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = '0';
+process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE = '1';
+
+const {
   annotateRiskyReadToolResult,
   estimateAnthropicClientPromptTokens,
   extractCallerSubKey,
   handleMessages,
   resetReportedAnthropicCacheForTests,
-} from '../src/handlers/messages.js';
-import { applyJsonResponseHint, extractRequestedJsonKeys, isExplicitJsonRequested, stabilizeJsonPayload } from '../src/handlers/chat.js';
+} = await import('../src/handlers/messages.js');
+const {
+  applyJsonResponseHint,
+  extractRequestedJsonKeys,
+  isExplicitJsonRequested,
+  stabilizeJsonPayload,
+} = await import('../src/handlers/chat.js');
+
+after(async () => {
+  try {
+    const db = await import('../src/db.js');
+    db.closeDatabaseForTest();
+  } catch {}
+  try { rmSync(testDataDir, { recursive: true, force: true }); } catch {}
+});
 
 function chatChunk(chunk) {
   return `data: ${JSON.stringify(chunk)}\n\n`;

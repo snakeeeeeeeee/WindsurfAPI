@@ -17,6 +17,8 @@ import { cacheKey, cacheGet, cacheSet } from '../cache.js';
 import { isExperimentalEnabled } from '../runtime-config.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getEffectiveProxy } from '../dashboard/proxy-config.js';
+import { markDynamicProxyFailure } from '../dynamic-proxy.js';
+import { isProxyError } from '../proxy-test.js';
 import {
   fingerprintBefore, fingerprintAfter, checkout as poolCheckout, checkin as poolCheckin,
 } from '../conversation-pool.js';
@@ -31,6 +33,14 @@ import {
 } from '../cascade-native-bridge.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { registerSseController } from '../sse-registry.js';
+import {
+  getAvailabilityConfig,
+  getFallbackForModel,
+  getRouteAdvice,
+  recordHealthyAccount,
+  recordUnhealthyAccount,
+  recordRateLimitEvent,
+} from '../availability-router.js';
 
 const HEARTBEAT_MS = 15_000;
 const QUEUE_RETRY_MS = 1_000;
@@ -1210,13 +1220,40 @@ export function buildUsageBody(serverUsage, messages, completionText, thinkingTe
 // Used when every account has momentarily exhausted its RPM budget so the
 // client is queued instead of getting a 503.
 async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, modelKey = null) {
-  const deadline = Date.now() + maxWaitMs;
+  const cfg = getAvailabilityConfig();
+  const effectiveMaxWaitMs = cfg.mode === 'off'
+    ? maxWaitMs
+    : Math.min(maxWaitMs, Math.max(1000, Number(cfg.fastSwitchBudgetMs) || 3000));
+  const deadline = Date.now() + effectiveMaxWaitMs;
+  let requestProbeTried = false;
   let acct = getApiKey(tried, modelKey);
+  if (acct && modelKey) log.debug(`availability: hot_pool_hit model=${modelKey} account=${acct.id}`);
   while (!acct) {
     if (signal?.aborted) return null;
     if (Date.now() >= deadline) return null;
-    await new Promise(r => setTimeout(r, QUEUE_RETRY_MS));
+    if (!requestProbeTried && modelKey && cfg.requestProbeEnabled !== false && cfg.mode !== 'off') {
+      requestProbeTried = true;
+      const budgetMs = Math.max(500, Math.min(Number(cfg.requestProbeBudgetMs) || 2000, deadline - Date.now()));
+      if (budgetMs > 0) {
+        try {
+          const { probeAvailabilityModelOnce } = await import('../availability-worker.js');
+          const probe = await Promise.race([
+            probeAvailabilityModelOnce(modelKey, {
+              maxRuntimeMs: budgetMs,
+              limit: Math.max(1, Number(cfg.requestProbeConcurrency) || 3),
+            }),
+            new Promise(resolve => setTimeout(() => resolve({ success: false, error: 'request_probe_timeout' }), budgetMs)),
+          ]);
+          log.info(`availability: request_probe_${probe?.success ? 'win' : 'miss'} model=${modelKey} budget=${budgetMs}ms error=${probe?.error || ''}`);
+        } catch (e) {
+          log.debug(`availability: request probe failed for ${modelKey}: ${e.message}`);
+        }
+      }
+    } else {
+      await new Promise(r => setTimeout(r, Math.min(QUEUE_RETRY_MS, Math.max(50, deadline - Date.now()))));
+    }
     acct = getApiKey(tried, modelKey);
+    if (acct && modelKey) log.debug(`availability: hot_pool_hit model=${modelKey} account=${acct.id}`);
   }
   return acct;
 }
@@ -1279,6 +1316,7 @@ export function mergeReasoningEffortIntoModel(reqModel, body) {
 export function shouldAutoFallback(body, context, result) {
   if (body?.stream) return false;
   if (context?.__fallbackAttempt) return false;
+  if (getAvailabilityConfig().autoFallback === 'off') return false;
   // v2.0.85 default ON → v2.0.86 default OFF (regression #129) →
   // v2.0.87 default ON again now that the cascade pool indexes the
   // fallback cascade under BOTH the original and the fallback model
@@ -1316,7 +1354,8 @@ export async function handleChatCompletions(body, context = {}) {
     const originalRoutingKey = resolveModel(mergeReasoningEffortIntoModel(body.model, body));
     const originalModel = body.model;
     const fallbackModel = result.body.error.fallback_model;
-    log.info(`auto-fallback: ${originalModel} → ${fallbackModel} (alias-key=${originalRoutingKey} whole pool rate_limited)`);
+    const fallbackReason = result.body.error.fallback_reason || 'rate_limit_auto_fallback';
+    log.info(`auto-fallback: ${originalModel} → ${fallbackModel} (alias-key=${originalRoutingKey} reason=${fallbackReason})`);
     const fallbackResult = await _handleChatCompletionsInner(
       { ...body, model: fallbackModel },
       // __aliasModelKey carries the resolved/merged ORIGINAL routing
@@ -1341,7 +1380,8 @@ export async function handleChatCompletions(body, context = {}) {
         const usage = fallbackResult.body.usage = fallbackResult.body.usage || {};
         const cb = usage.cascade_breakdown = usage.cascade_breakdown || {};
         cb.served_model = fallbackModel;
-        cb.fallback_reason = 'rate_limit_auto_fallback';
+        cb.fallback_from = originalRoutingKey;
+        cb.fallback_reason = fallbackReason;
       }
     }
     return fallbackResult;
@@ -1478,6 +1518,28 @@ async function _handleChatCompletionsInner(body, context = {}) {
           type: 'invalid_request_error',
           param: 'model',
           code: 'model_not_found',
+        },
+      },
+    };
+  }
+  const routeAdvice = getRouteAdvice(routingModelKey, {
+    requires1m: /(^|-)1m($|-)/i.test(String(routingModelKey || reqModel || '')),
+  });
+  if (routeAdvice.shouldShortCircuit) {
+    const retryAfterMs = routeAdvice.retryAfterMs || 30000;
+    const message = routeAdvice.fallbackModel
+      ? `${reqModel || routingModelKey} availability breaker is open; falling back to ${routeAdvice.fallbackModel}`
+      : `${reqModel || routingModelKey} availability breaker is open`;
+    return {
+      status: 429,
+      headers: { 'Retry-After': String(Math.ceil(retryAfterMs / 1000)) },
+      body: {
+        error: {
+          message,
+          type: 'rate_limit_exceeded',
+          retry_after_ms: retryAfterMs,
+          ...(routeAdvice.fallbackModel ? { fallback_model: routeAdvice.fallbackModel } : {}),
+          fallback_reason: 'model_breaker_open',
         },
       },
     };
@@ -1891,12 +1953,19 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // upstream_transient_error instead of the misleading "rate limit"
   // message the all-accounts-exhausted branch would otherwise produce.
   let internalCount = 0;
+  const requestAttemptStartedAt = Date.now();
+  const fastSwitchBudgetMs = Math.max(1000, Number(getAvailabilityConfig().fastSwitchBudgetMs) || 3000);
+  const fastSwitchMaxAttempts = Math.max(0, Number(getAvailabilityConfig().fastSwitchMaxAttempts) || 0);
   // Dynamic: try every active account in the pool (capped at 10) so a
   // large pool with many rate-limited accounts can still fall through
   // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
   // first accounts rate-limited, healthy accounts were never reached
   // even though they would have worked (issue #5).
-  const maxAttempts = Math.min(10, Math.max(3, getAccountList().filter(a => a.status === 'active').length));
+  const maxAttempts = Math.min(
+    10,
+    Math.max(3, getAccountList().filter(a => a.status === 'active').length),
+    Math.max(1, fastSwitchMaxAttempts + 1),
+  );
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let acct = null;
     if (reuseEntry && attempt === 0) {
@@ -1933,7 +2002,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
       }
     }
     if (!acct) {
-      acct = await waitForAccountFn(tried, null, QUEUE_MAX_WAIT_MS, routingModelKey);
+      const remainingFastBudget = Math.max(500, fastSwitchBudgetMs - (Date.now() - requestAttemptStartedAt));
+      acct = await waitForAccountFn(tried, null, Math.min(QUEUE_MAX_WAIT_MS, remainingFastBudget), routingModelKey);
       if (!acct) {
         // Same diagnostic-error fix as the stream path — surface real reason
         // for the queue timeout (rate limit / no entitlement / upstream stall)
@@ -1956,9 +2026,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
           // effort sibling so the caller can switch off the weekly-
           // quota-tight tier.
           if (rateLimited.allLimited || tempUnavail.allUnavailable) {
-            const fb = pickRateLimitFallback(routingModelKey || displayModel);
+            const fb = getFallbackForModel(routingModelKey || displayModel) || pickRateLimitFallback(routingModelKey || displayModel);
             if (fb) {
               lastErr.body.error.fallback_model = fb;
+              lastErr.body.error.fallback_reason = 'pool_temporarily_unavailable';
               lastErr.body.error.remediation = `池里所有账号在 ${displayModel} 上都已限流。这个 effort 变体上游限频严（每账号几十分钟滑窗），建议改用 ${fb}（同基础模型，effort 等级更低，daily quota 更宽松）。`;
             }
           }
@@ -2040,9 +2111,12 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // next identical original-model request hits cache instead of
       // re-burning the rate-limit + fallback cycle.
       context.__originalCkey || null,
-      { skipReportedUsageOverrides: !!body.__skipReportedUsageOverrides },
+      { skipReportedUsageOverrides: !!body.__skipReportedUsageOverrides, accountId: acct.id },
     );
-    if (result.status === 200) return result;
+    if (result.status === 200) {
+      recordHealthyAccount({ modelKey: routingModelKey, accountId: acct.id, email: acct.email, servedModel: routingModelKey, latencyMs: Date.now() - requestAttemptStartedAt, source: 'chat_success' }).catch(() => {});
+      return result;
+    }
     reuseEntry = null; // don't try to reuse on the retry
     if (result.reuseEntryInvalid) reuseEntryDead = true;
     // #101: same upstream-timeout invalidation as the stream path —
@@ -2062,6 +2136,15 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // Rate limit: this account is done for this model, try the next one
     if (errType === 'rate_limit_exceeded') {
       recordRateLimited();
+      const retryAfterMs = result.body?.error?.retry_after_ms || 30000;
+      recordUnhealthyAccount({ modelKey: routingModelKey, accountId: acct.id, email: acct.email, error: _resultMsg, rateLimited: true, latencyMs: Date.now() - requestAttemptStartedAt }).catch(() => {});
+      recordRateLimitEvent({
+        modelKey: routingModelKey,
+        accountId: acct.id,
+        email: acct.email,
+        retryAfterMs,
+        reason: _resultMsg,
+      }).catch(() => {});
       // v2.0.91 — IP-level circuit breaker: when Windsurf upstream
       // rate-limits several accounts for the same model in a tight
       // window, it's usually IP-wide cooldown, not per-account.
@@ -2079,8 +2162,9 @@ async function _handleChatCompletionsInner(body, context = {}) {
       const sameModelBurst = context.__rateLimitEvents.filter(e => e.model === routingModelKey);
       if (sameModelBurst.length >= RL_BURST_THRESHOLD) {
         const maxCooldown = Math.max(...sameModelBurst.map(() => 30_000));
+        const fb = getFallbackForModel(routingModelKey || displayModel) || pickRateLimitFallback(routingModelKey || displayModel);
         log.warn(`Chat[${reqId}]: IP-rate-limit burst detected — ${sameModelBurst.length} accounts rate-limited on ${displayModel} within ${RL_WINDOW_MS}ms. Short-circuiting.`);
-        return {
+        const err = {
           status: 429,
           headers: { 'Retry-After': String(Math.ceil(maxCooldown / 1000)) },
           body: {
@@ -2091,19 +2175,30 @@ async function _handleChatCompletionsInner(body, context = {}) {
             },
           },
         };
+        if (fb) {
+          err.body.error.fallback_model = fb;
+          err.body.error.fallback_reason = 'rate_limit_burst';
+        }
+        return err;
       }
       log.warn(`Account ${acct.email} rate-limited on ${displayModel}, trying next account`);
+      if (Date.now() - requestAttemptStartedAt >= fastSwitchBudgetMs || attempt >= fastSwitchMaxAttempts) {
+        log.warn(`availability: fast_switch budget exhausted for ${displayModel} after ${attempt + 1} attempt(s)`);
+        break;
+      }
       continue;
     }
     // Cascade transient 错误通常是上游或本地 LS 短暂抖动，先退避再切账号，避免连续打爆同一热窗口。
     if (errType === 'upstream_internal_error' || errType === 'upstream_transient_error') {
       internalCount++;
+      recordUnhealthyAccount({ modelKey: routingModelKey, accountId: acct.id, email: acct.email, error: _resultMsg, latencyMs: Date.now() - requestAttemptStartedAt }).catch(() => {});
       const backoffMs = await internalErrorBackoff(internalCount - 1);
       log.warn(`Chat[${reqId}]: ${acct.email} upstream transient error, waited ${backoffMs}ms before next account`);
       continue;
     }
     // Model not available on this account (permission_denied, etc.)
     if (errType === 'model_not_available') {
+      recordUnhealthyAccount({ modelKey: routingModelKey, accountId: acct.id, email: acct.email, error: _resultMsg, latencyMs: Date.now() - requestAttemptStartedAt }).catch(() => {});
       log.warn(`Account ${acct.email} cannot serve ${displayModel}, trying next account`);
       continue;
     }
@@ -2136,7 +2231,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
       log.info(`Chat[${reqId}]: restored checked-out cascade after temporary unavailability`);
     }
     const retryAfterSec = Math.ceil(temporaryUnavailable.retryAfterMs / 1000);
-    return {
+    const fb = getFallbackForModel(routingModelKey || displayModel) || pickRateLimitFallback(routingModelKey || displayModel);
+    const err = {
       status: 429,
       headers: { 'Retry-After': String(retryAfterSec) },
       body: {
@@ -2147,6 +2243,11 @@ async function _handleChatCompletionsInner(body, context = {}) {
         },
       },
     };
+    if (fb) {
+      err.body.error.fallback_model = fb;
+      err.body.error.fallback_reason = 'pool_temporarily_unavailable';
+    }
+    return err;
   }
   if (!lastErr || lastErr.status === 429) {
     const rl = isAllRateLimited(routingModelKey);
@@ -2156,7 +2257,13 @@ async function _handleChatCompletionsInner(body, context = {}) {
         log.info(`Chat[${reqId}]: restored checked-out cascade after rate limit`);
       }
       const retryAfterSec = Math.ceil(rl.retryAfterMs / 1000);
-      return { status: 429, headers: { 'Retry-After': String(retryAfterSec) }, body: { error: { message: `${displayModel} 所有账号均已达速率限制，请 ${retryAfterSec} 秒后重试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs } } };
+      const fb = getFallbackForModel(routingModelKey || displayModel) || pickRateLimitFallback(routingModelKey || displayModel);
+      const err = { status: 429, headers: { 'Retry-After': String(retryAfterSec) }, body: { error: { message: `${displayModel} 所有账号均已达速率限制，请 ${retryAfterSec} 秒后重试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs } } };
+      if (fb) {
+        err.body.error.fallback_model = fb;
+        err.body.error.fallback_reason = 'all_accounts_rate_limited';
+      }
+      return err;
     }
   }
   if (!reuseEntryDead && checkedOutReuseEntry && fpBefore) {
@@ -2553,6 +2660,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // errors and transport issues shouldn't disable the key.
     const isAuthFail = /unauthenticated|invalid api key|invalid_grant|permission_denied.*account/i.test(err.message);
     const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
+    const proxyFailure = isProxyError(err);
     const isInternal = /internal error occurred.*error id/i.test(err.message);
     const isTransport = isCascadeTransportError(err);
     const isTransient = isUpstreamTransientError(err, isInternal);
@@ -2563,8 +2671,17 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // we only catch unambiguous policy markers, not generic "content
     // moderation" warnings (which can be retried on a different model).
     const isPolicyBlocked = /cyber\s*verification|content[\s_-]+policy|policy[\s_-]+(?:violation|blocked|denied)|safety[\s_-]+(?:policy|blocked)|prompt[\s_-]+(?:rejected|blocked)\s+by[\s_-]+policy|usage[\s_-]+policy[\s_-]+violation/i.test(err.message);
-    if (isAuthFail) reportError(apiKey);
-    if (isRateLimit) { markRateLimited(apiKey, rateLimitCooldownMs(err.message), modelKey); err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error'; }
+          if (isAuthFail) reportError(apiKey);
+          if (proxyFailure && opts?.accountId) {
+            markDynamicProxyFailure(opts.accountId, err, { autoRebind: true }).catch(() => {});
+            err.isModelError = true; err.kind ||= 'proxy_error';
+          }
+          if (isRateLimit) {
+            const retryAfterMs = rateLimitCooldownMs(err.message);
+            markRateLimited(apiKey, retryAfterMs, modelKey);
+            recordRateLimitEvent({ modelKey, accountId: '', retryAfterMs, reason: err.message }).catch(() => {});
+            err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error';
+          }
     if (isInternal) { reportInternalError(apiKey); err.isModelError = true; err.kind ||= 'transient_stall'; }
     if (isTransport) { err.isModelError = true; err.kind ||= 'transient_stall'; }
     if (isPolicyBlocked) { err.isPolicyBlocked = true; err.isModelError = true; err.kind = 'policy_blocked'; }
@@ -2575,7 +2692,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       reportBanSignal(apiKey, err.message);
       err.isModelError = true; err.kind ||= 'auth_error';
     }
-    if (err.isModelError && err.kind !== 'transient_stall' && !isRateLimit && !isInternal) {
+    if (err.isModelError && err.kind !== 'transient_stall' && err.kind !== 'proxy_error' && !isRateLimit && !isInternal) {
       updateCapability(apiKey, modelKey, false, 'model_error');
     }
     recordRequest(model, false, Date.now() - startTime, apiKey);
@@ -2743,12 +2860,18 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       // between accounts and (b) surface upstream_transient_error when
       // every attempt hit it.
       let streamInternalCount = 0;
+      const fastSwitchBudgetMs = Math.max(1000, Number(getAvailabilityConfig().fastSwitchBudgetMs) || 3000);
+      const fastSwitchMaxAttempts = Math.max(0, Number(getAvailabilityConfig().fastSwitchMaxAttempts) || 0);
       // Dynamic: try every active account in the pool (capped at 10) so a
   // large pool with many rate-limited accounts can still fall through
   // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
   // first accounts rate-limited, healthy accounts were never reached
   // even though they would have worked (issue #5).
-  const maxAttempts = Math.min(10, Math.max(3, getAccountList().filter(a => a.status === 'active').length));
+  const maxAttempts = Math.min(
+    10,
+    Math.max(3, getAccountList().filter(a => a.status === 'active').length),
+    Math.max(1, fastSwitchMaxAttempts + 1),
+  );
 
       // Accumulate chunks so we can cache a successful response at the end.
       let accText = '';
@@ -2963,7 +3086,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
           }
           if (!acct) {
-            acct = await waitForAccountFn(tried, abortController.signal, QUEUE_MAX_WAIT_MS, modelKey);
+            const remainingFastBudget = Math.max(500, fastSwitchBudgetMs - (Date.now() - startTime));
+            acct = await waitForAccountFn(tried, abortController.signal, Math.min(QUEUE_MAX_WAIT_MS, remainingFastBudget), modelKey);
             if (!acct) {
               // Without an explicit lastErr here, the final retry-failed log
               // ends up printing an empty message and the SSE error event
@@ -2987,9 +3111,10 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 // non-stream path. Attach after lastErr is set so
                 // the lastErr-presence regression test still passes.
                 if (rateLimited.allLimited || tempUnavail.allUnavailable) {
-                  const fb = pickRateLimitFallback(modelKey || model);
+                  const fb = getFallbackForModel(modelKey || model) || pickRateLimitFallback(modelKey || model);
                   if (fb) {
                     lastErr.fallback_model = fb;
+                    lastErr.fallback_reason = 'pool_temporarily_unavailable';
                     lastErr.remediation = `池里所有账号在 ${model} 上都已限流。这个 effort 变体上游限频严，建议改用 ${fb}（同基础模型，effort 等级更低）。`;
                   }
                 }
@@ -3205,6 +3330,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // success
             if (hadSuccess) reportSuccess(currentApiKey);
             updateCapability(currentApiKey, modelKey, true, 'success');
+            recordHealthyAccount({ modelKey, accountId: acct.id, email: acct.email, servedModel: modelKey, latencyMs: Date.now() - startTime, source: 'chat_stream_success' }).catch(() => {});
             recordRequest(model, true, Date.now() - startTime, currentApiKey);
             if (!rolePrinted) {
               send({ id, object: 'chat.completion.chunk', created, model,
@@ -3284,13 +3410,25 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
             const isAuthFail = /unauthenticated|invalid api key|invalid_grant|permission_denied.*account/i.test(err.message);
             const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
+            const proxyFailure = isProxyError(err);
             const isInternal = /internal error occurred.*error id/i.test(err.message);
             const isTransport = isCascadeTransportError(err);
             const isTransient = isUpstreamTransientError(err, isInternal);
             // v2.0.61 (#113) — same policy detection as nonStreamResponse.
             const isPolicyBlocked = /cyber\s*verification|content[\s_-]+policy|policy[\s_-]+(?:violation|blocked|denied)|safety[\s_-]+(?:policy|blocked)|prompt[\s_-]+(?:rejected|blocked)\s+by[\s_-]+policy|usage[\s_-]+policy[\s_-]+violation/i.test(err.message);
             if (isAuthFail) reportError(currentApiKey);
-            if (isRateLimit) { recordRateLimited(); markRateLimited(currentApiKey, rateLimitCooldownMs(err.message), modelKey); err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error'; }
+            if (proxyFailure && acct?.id) {
+              markDynamicProxyFailure(acct.id, err, { autoRebind: true }).catch(() => {});
+              err.isModelError = true; err.kind ||= 'proxy_error';
+            }
+            if (isRateLimit) {
+              recordRateLimited();
+              const retryAfterMs = rateLimitCooldownMs(err.message);
+              markRateLimited(currentApiKey, retryAfterMs, modelKey);
+              recordUnhealthyAccount({ modelKey, accountId: acct?.id, email: acct?.email, error: err.message, rateLimited: true, latencyMs: Date.now() - startTime }).catch(() => {});
+              recordRateLimitEvent({ modelKey, accountId: acct?.id, email: acct?.email, retryAfterMs, reason: err.message }).catch(() => {});
+              err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error';
+            }
             // v2.0.91 — IP-level rate limit circuit breaker (stream path).
             // Same logic as non-stream: ≥3 accounts rate-limited for the
             // same model within 8s → Windsurf is doing IP-wide cooldown,
@@ -3310,7 +3448,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 context.__rlAborted = true;
                 log.warn(`Chat[${reqId}] stream: IP-rate-limit burst — ${sameModelBurst.length} accounts rate-limited on ${model} within ${RL_WINDOW_MS}ms. Short-circuiting.`);
                 const cooldown = Math.max(...sameModelBurst.map(() => 30_000));
-                lastErr = Object.assign(new Error(`All accounts temporarily rate-limited on ${model}. Windsurf upstream is applying IP-level cooldown. Wait ~${Math.ceil(cooldown / 1000)}s before retrying.`), { type: 'rate_limit_exceeded', retry_after_ms: cooldown });
+                const fb = getFallbackForModel(modelKey || model) || pickRateLimitFallback(modelKey || model);
+                lastErr = Object.assign(new Error(`All accounts temporarily rate-limited on ${model}. Windsurf upstream is applying IP-level cooldown. Wait ~${Math.ceil(cooldown / 1000)}s before retrying.`), { type: 'rate_limit_exceeded', retry_after_ms: cooldown, fallback_model: fb || undefined, fallback_reason: fb ? 'rate_limit_burst' : undefined });
                 break;
               }
             }
@@ -3323,8 +3462,11 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               reportBanSignal(currentApiKey, err.message);
               err.isModelError = true; err.kind ||= 'auth_error';
             }
-            if (err.isModelError && err.kind !== 'transient_stall' && !isRateLimit && !isInternal) {
+            if (err.isModelError && err.kind !== 'transient_stall' && err.kind !== 'proxy_error' && !isRateLimit && !isInternal) {
               updateCapability(currentApiKey, modelKey, false, 'model_error');
+            }
+            if (!isRateLimit && err.isModelError && acct?.id) {
+              recordUnhealthyAccount({ modelKey, accountId: acct.id, email: acct.email, error: err.message, latencyMs: Date.now() - startTime }).catch(() => {});
             }
             if (isRateLimit && strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === currentApiKey) {
               log.info(`Chat[${reqId}]: strict reuse preserved cascade after rate limit`);
@@ -3346,6 +3488,10 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 log.warn(`Chat[${reqId}] stream: ${acct.email} upstream transient error (${isTransport ? 'cascade_transport' : 'internal_error'}), waited ${backoffMs}ms before next account`);
               } else {
                 log.warn(`Account ${acct.email} failed (${tag}) on ${model}, trying next`);
+              }
+              if (Date.now() - startTime >= fastSwitchBudgetMs || attempt >= fastSwitchMaxAttempts) {
+                log.warn(`availability: fast_switch budget exhausted for stream ${model} after ${attempt + 1} attempt(s)`);
+                break;
               }
               continue;
             }
@@ -3392,6 +3538,13 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // output). Close cleanly with a plain stop — the caller saw
             // whatever partial content we produced. Error details only
             // go to the server log.
+            if (!allInternal && (temporaryUnavailable.allUnavailable || rl.allLimited || lastErr?.type === 'rate_limit_exceeded')) {
+              const fb = getFallbackForModel(modelKey || model) || pickRateLimitFallback(modelKey || model);
+              if (fb && lastErr && typeof lastErr === 'object') {
+                lastErr.fallback_model ||= fb;
+                lastErr.fallback_reason ||= temporaryUnavailable.allUnavailable ? 'pool_temporarily_unavailable' : 'all_accounts_rate_limited';
+              }
+            }
             const errType = allInternal
               ? 'upstream_transient_error'
               : (temporaryUnavailable.allUnavailable || lastErr?.type === 'rate_limit_exceeded')

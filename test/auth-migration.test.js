@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { migrateReplicaAccountsTo } from '../src/auth.js';
+
+const testDataDir = mkdtempSync(join(tmpdir(), 'wfapi-auth-migration-db-'));
+mkdirSync(testDataDir, { recursive: true });
+process.env.WINDSURFAPI_SQLITE_PATH = join(testDataDir, 'windsurfapi.sqlite');
+process.env.WINDSURFAPI_DB_IMPORT_JSON_ON_EMPTY = '0';
+
+const { migrateReplicaAccountsTo } = await import('../src/auth.js');
 
 // Issue #67 — `accounts.json` used to live under per-replica `dataDir`
 // (replica-${HOSTNAME}/), so each docker-compose upgrade orphaned the

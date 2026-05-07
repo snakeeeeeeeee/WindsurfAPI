@@ -1,8 +1,17 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { config } from '../src/config.js';
-import { configureBindHost } from '../src/auth.js';
-import { buildBatchProxyBinding, handleDashboardApi } from '../src/dashboard/api.js';
+import { mkdirSync, mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const testDataDir = mkdtempSync(join(tmpdir(), 'wfapi-dashboard-api-'));
+mkdirSync(testDataDir, { recursive: true });
+process.env.WINDSURFAPI_SQLITE_PATH = join(testDataDir, 'windsurfapi.sqlite');
+process.env.WINDSURFAPI_DB_IMPORT_JSON_ON_EMPTY = '0';
+
+const { config } = await import('../src/config.js');
+const { configureBindHost } = await import('../src/auth.js');
+const { buildBatchProxyBinding, handleDashboardApi } = await import('../src/dashboard/api.js');
 
 const originalDashboardPassword = config.dashboardPassword;
 const originalApiKey = config.apiKey;

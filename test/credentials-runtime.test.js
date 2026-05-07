@@ -10,7 +10,16 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import { mkdirSync, mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const testDataDir = mkdtempSync(join(tmpdir(), 'wfapi-credentials-'));
+mkdirSync(testDataDir, { recursive: true });
+process.env.WINDSURFAPI_SQLITE_PATH = join(testDataDir, 'windsurfapi.sqlite');
+process.env.WINDSURFAPI_DB_IMPORT_JSON_ON_EMPTY = '0';
+
+const {
   hashPassword,
   verifyPassword,
   setRuntimeApiKey,
@@ -18,8 +27,8 @@ import {
   getCredentials,
   getEffectiveApiKey,
   getEffectiveDashboardPasswordStored,
-} from '../src/runtime-config.js';
-import { config } from '../src/config.js';
+} = await import('../src/runtime-config.js');
+const { config } = await import('../src/config.js');
 
 const original = {
   apiKey: config.apiKey,

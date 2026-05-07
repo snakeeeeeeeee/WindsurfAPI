@@ -11,8 +11,24 @@
 import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
-import { getEffectiveProxy } from './dashboard/proxy-config.js';
+import { getEffectiveProxy, removeAccountProxy } from './dashboard/proxy-config.js';
 import { getTierModels, getModelKeysByEnum, MODELS, registerDiscoveredFreeModel } from './models.js';
+import { deleteAccountAvailabilityHistory, getAccountsJson, replaceAccountsJson } from './db.js';
+import {
+  autoBindNewAccountIfEnabled,
+  clearAccountDynamicProxy,
+  getMaskedProxyBinding,
+  resumeAccountDynamicProxy,
+  suspendAccountDynamicProxy,
+} from './dynamic-proxy.js';
+import {
+  getAccountAvailabilitySummary,
+  getAccountModelCooldown,
+  getPreferredHealthyAccountIds,
+  isAccountModelCoolingDown,
+  markAccountModelCooldown,
+  purgeAccountAvailabilityState,
+} from './availability-router.js';
 
 import { join } from 'path';
 // accounts.json lives in the cluster-shared dir so add-account writes from
@@ -177,7 +193,7 @@ function _serializeAccounts() {
   return accounts.map(a => ({
     id: a.id, email: a.email, apiKey: a.apiKey,
     apiServerUrl: a.apiServerUrl, method: a.method,
-    status: a.status, addedAt: a.addedAt,
+    status: a.status, errorCount: a.errorCount || 0, addedAt: a.addedAt,
     tier: a.tier, tierManual: !!a.tierManual,
     capabilities: a.capabilities, lastProbed: a.lastProbed,
     credits: a.credits || null,
@@ -192,16 +208,10 @@ function _serializeAccounts() {
 function saveAccounts() {
   if (_saveInFlight) { _savePending = true; return; }
   _saveInFlight = true;
-  const tempFile = ACCOUNTS_FILE + '.tmp';
   try {
-    // Atomic write: write to .tmp then rename so a crash mid-write can't
-    // leave accounts.json truncated/corrupt. Node's renameSync is atomic
-    // on POSIX and replaces the target on Windows (fs.rename behavior).
-    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2));
-    renameSync(tempFile, ACCOUNTS_FILE);
+    replaceAccountsJson(_serializeAccounts());
   } catch (e) {
     log.error('Failed to save accounts:', e.message);
-    try { unlinkSync(tempFile); } catch {}
   } finally {
     _saveInFlight = false;
     if (_savePending) { _savePending = false; setImmediate(saveAccounts); }
@@ -216,13 +226,10 @@ function saveAccounts() {
  * atomic.
  */
 export function saveAccountsSync() {
-  const tempFile = ACCOUNTS_FILE + '.shutdown.tmp';
   try {
-    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2));
-    renameSync(tempFile, ACCOUNTS_FILE);
+    replaceAccountsJson(_serializeAccounts());
   } catch (e) {
     log.error('Shutdown: failed to flush accounts:', e.message);
-    try { unlinkSync(tempFile); } catch {}
   }
 }
 
@@ -275,12 +282,7 @@ export function migrateReplicaAccountsTo({ sharedDir, accountsFile, logger = log
 
 function loadAccounts() {
   try {
-    migrateReplicaAccountsTo({
-      sharedDir: config.sharedDataDir || config.dataDir,
-      accountsFile: ACCOUNTS_FILE,
-    });
-    if (!existsSync(ACCOUNTS_FILE)) return;
-    const data = JSON.parse(readFileSync(ACCOUNTS_FILE, 'utf-8'));
+    const data = getAccountsJson();
     for (const a of data) {
       if (accounts.find(x => x.apiKey === a.apiKey)) continue;
       accounts.push({
@@ -289,7 +291,7 @@ function loadAccounts() {
         apiServerUrl: a.apiServerUrl || '',
         method: a.method || 'api_key',
         status: a.status || 'active',
-        lastUsed: 0, errorCount: 0,
+        lastUsed: 0, errorCount: a.errorCount || 0,
         refreshToken: a.refreshToken || '', expiresAt: 0, refreshTimer: null,
         addedAt: a.addedAt || Date.now(),
         tier: a.tier || 'unknown',
@@ -302,7 +304,7 @@ function loadAccounts() {
         userStatusLastFetched: a.userStatusLastFetched || 0,
       });
     }
-    if (data.length > 0) log.info(`Loaded ${data.length} account(s) from disk`);
+    if (data.length > 0) log.info(`Loaded ${data.length} account(s) from SQLite`);
   } catch (e) {
     log.error('Failed to load accounts:', e.message);
   }
@@ -366,6 +368,7 @@ export function addAccountByKey(apiKey, label = '') {
   account.credits = null;
   accounts.push(account);
   saveAccounts();
+  autoBindNewAccountIfEnabled(account.id).catch(() => {});
   log.info(`Account added: ${account.id} (${account.email}) [api_key]`);
   return account;
 }
@@ -399,6 +402,7 @@ export async function addAccountByToken(token, label = '') {
   };
   accounts.push(account);
   saveAccounts();
+  autoBindNewAccountIfEnabled(account.id).catch(() => {});
   log.info(`Account added: ${account.id} (${account.email}) [token] server=${account.apiServerUrl}`);
   return account;
 }
@@ -516,12 +520,21 @@ export function getAvailableModelsForAccount(account) {
 /**
  * Set account status (active, disabled, error).
  */
-export function setAccountStatus(id, status) {
+export function setAccountStatus(id, status, opts = {}) {
   const account = accounts.find(a => a.id === id);
   if (!account) return false;
   account.status = status;
   if (status === 'active') account.errorCount = 0;
   saveAccounts();
+  if (status === 'active') {
+    resumeAccountDynamicProxy(id).catch(e => log.debug(`dynamic-proxy: resume failed for ${id}: ${e.message}`));
+  } else {
+    suspendAccountDynamicProxy(id, `account_status_${status}`).catch(e => log.debug(`dynamic-proxy: suspend failed for ${id}: ${e.message}`));
+  }
+  if (status !== 'active' && opts.purgeAvailability !== false) {
+    purgeAccountAvailabilityState(id, { reason: `account_status_${status}` })
+      .catch(e => log.debug(`availability: failed to purge ${id} after status=${status}: ${e.message}`));
+  }
   log.info(`Account ${id} status set to ${status}`);
   return true;
 }
@@ -586,12 +599,25 @@ export function setAccountTokens(id, { apiKey, refreshToken, idToken } = {}) {
 /**
  * Remove an account by ID.
  */
-export function removeAccount(id) {
+export function removeAccount(id, opts = {}) {
   const idx = accounts.findIndex(a => a.id === id);
   if (idx === -1) return false;
   const account = accounts[idx];
   accounts.splice(idx, 1);
   saveAccounts();
+  if (opts.purgeDurable !== false) {
+    try {
+      clearAccountDynamicProxy(id);
+      removeAccountProxy(id);
+      deleteAccountAvailabilityHistory(id);
+    } catch (e) {
+      log.debug(`availability: failed to purge durable state for removed account ${id}: ${e.message}`);
+    }
+  }
+  if (opts.purgeAvailability !== false) {
+    purgeAccountAvailabilityState(id, { reason: 'account_removed' })
+      .catch(e => log.debug(`availability: failed to purge removed account ${id}: ${e.message}`));
+  }
   // Drop any Cascade conversations owned by this key so future requests
   // don't try to resume on an account that no longer exists.
   import('./conversation-pool.js').then(m => m.invalidateFor({ apiKey: account.apiKey })).catch(() => {});
@@ -616,9 +642,12 @@ export function removeAccount(id) {
 export function getApiKey(excludeKeys = [], modelKey = null) {
   const now = Date.now();
   const candidates = [];
+  const preferredIds = modelKey ? getPreferredHealthyAccountIds(modelKey, accounts) : [];
+  const preferredRank = new Map(preferredIds.map((id, idx) => [id, idx]));
   for (const a of accounts) {
     if (a.status !== 'active') continue;
     if (excludeKeys.includes(a.apiKey)) continue;
+    if (modelKey && isAccountModelCoolingDown(a.id, modelKey, now)) continue;
     if (isRateLimitedForModel(a, modelKey, now)) continue;
     const limit = rpmLimitFor(a);
     if (limit <= 0) continue; // expired tier
@@ -638,6 +667,9 @@ export function getApiKey(excludeKeys = [], modelKey = null) {
   // doesn't keep getting picked over a healthier account). Then RPM
   // remaining-ratio. Finally least-recently-used.
   candidates.sort((x, y) => {
+    const px = preferredRank.has(x.account.id) ? preferredRank.get(x.account.id) : Infinity;
+    const py = preferredRank.has(y.account.id) ? preferredRank.get(y.account.id) : Infinity;
+    if (px !== py) return px - py;
     const ix = x.account._inflight || 0;
     const iy = y.account._inflight || 0;
     if (ix !== iy) return ix - iy;
@@ -715,6 +747,7 @@ export function acquireAccountByKey(apiKey, modelKey = null) {
   const a = accounts.find(x => x.apiKey === apiKey);
   if (!a) return null;
   if (a.status !== 'active') return null;
+  if (modelKey && isAccountModelCoolingDown(a.id, modelKey, now)) return null;
   if (isRateLimitedForModel(a, modelKey, now)) return null;
   const limit = rpmLimitFor(a);
   if (limit <= 0) return null;
@@ -743,6 +776,11 @@ export function getAccountAvailability(apiKey, modelKey = null) {
   const a = accounts.find(x => x.apiKey === apiKey);
   if (!a) return { available: false, reason: 'missing', retryAfterMs: 60_000 };
   if (a.status !== 'active') return { available: false, reason: `status:${a.status}`, retryAfterMs: 60_000 };
+
+  if (modelKey) {
+    const cd = getAccountModelCooldown(a.id, modelKey, now);
+    if (cd) return { available: false, reason: 'shared_model_rate_limited', retryAfterMs: Math.max(1000, cd.until - now) };
+  }
 
   if (a.rateLimitedUntil && a.rateLimitedUntil > now) {
     return { available: false, reason: 'rate_limited', retryAfterMs: Math.max(1000, a.rateLimitedUntil - now) };
@@ -820,11 +858,41 @@ export function markRateLimited(apiKey, durationMs = 5 * 60 * 1000, modelKey = n
   if (modelKey) {
     if (!account._modelRateLimits) account._modelRateLimits = {};
     account._modelRateLimits[modelKey] = Math.max(account._modelRateLimits[modelKey] || 0, until);
+    markAccountModelCooldown({
+      accountId: account.id,
+      email: account.email,
+      modelKey,
+      durationMs: safeMs,
+      source: 'upstream_rate_limit',
+    }).catch(e => log.debug(`availability: failed to sync cooldown for ${account.id}/${modelKey}: ${e.message}`));
     log.warn(`Account ${account.id} (${account.email}) rate-limited on ${modelKey} for ${Math.round(safeMs / 60000)} min`);
   } else {
     account.rateLimitedUntil = Math.max(account.rateLimitedUntil || 0, until);
+    markAccountModelCooldown({
+      accountId: account.id,
+      email: account.email,
+      modelKey: '*',
+      durationMs: safeMs,
+      source: 'upstream_rate_limit_global',
+    }).catch(e => log.debug(`availability: failed to sync global cooldown for ${account.id}: ${e.message}`));
     log.warn(`Account ${account.id} (${account.email}) rate-limited (all models) for ${Math.round(safeMs / 60000)} min`);
   }
+}
+
+export function clearAccountRateLimit(id, modelKey = '*') {
+  const account = accounts.find(a => a.id === id);
+  if (!account) return false;
+  if (!modelKey || modelKey === '*') {
+    account.rateLimitedUntil = 0;
+    account._modelRateLimits = {};
+  } else if (modelKey === '__global__') {
+    account.rateLimitedUntil = 0;
+  } else if (account._modelRateLimits) {
+    delete account._modelRateLimits[modelKey];
+  }
+  saveAccounts();
+  log.info(`Account ${id} rate-limit cooldown cleared for ${modelKey || '*'}`);
+  return true;
 }
 
 export function refundReservation(apiKey, timestamp) {
@@ -866,6 +934,7 @@ export function reportError(apiKey) {
     account.status = 'error';
     log.warn(`Account ${account.id} (${account.email}) disabled after ${account.errorCount} errors`);
   }
+  saveAccounts();
 }
 
 /**
@@ -874,18 +943,25 @@ export function reportError(apiKey) {
 export function reportSuccess(apiKey) {
   const account = accounts.find(a => a.apiKey === apiKey);
   if (!account) return;
+  let changed = false;
   if (account.errorCount > 0) {
     account.errorCount = 0;
     account.status = 'active';
+    changed = true;
   }
-  account.internalErrorStreak = 0;
+  if (account.internalErrorStreak) {
+    account.internalErrorStreak = 0;
+    changed = true;
+  }
   // v2.0.56: any successful chat clears the ban-signal streak — Windsurf's
   // "Authentication failed" can fire transiently during deploys, so we
   // only mark banned when the streak isn't broken by a real success.
   if (account._banSignalCount) {
     account._banSignalCount = 0;
     account._banSignalAt = 0;
+    changed = true;
   }
+  if (changed) saveAccounts();
 }
 
 /**
@@ -901,6 +977,7 @@ export function reportInternalError(apiKey) {
   if (account.internalErrorStreak >= 2) {
     account.rateLimitedUntil = Date.now() + 5 * 60 * 1000;
     log.warn(`Account ${account.id} (${account.email}) quarantined 5min after ${account.internalErrorStreak} consecutive upstream internal errors`);
+    saveAccounts();
   }
 }
 
@@ -976,6 +1053,7 @@ export function clearBanSignals(apiKey) {
   if (!account) return;
   account._banSignalAt = 0;
   account._banSignalCount = 0;
+  saveAccounts();
 }
 
 // ─── Status ────────────────────────────────────────────────
@@ -1070,6 +1148,7 @@ export function getAccountList() {
   return accounts.map(a => {
     const rpmLimit = rpmLimitFor(a);
     const rpmUsed = pruneRpmHistory(a, now);
+    const availability = getAccountAvailabilitySummary(a, now);
     return {
       id: a.id,
       email: a.email,
@@ -1088,6 +1167,8 @@ export function getAccountList() {
       modelRateLimits: a._modelRateLimits ? Object.fromEntries(
         Object.entries(a._modelRateLimits).filter(([, v]) => v > now)
       ) : {},
+      availability,
+      availabilityCooldowns: Object.fromEntries((availability?.cooldowns || []).map(cd => [cd.modelKey, cd.until])),
       rpmUsed,
       rpmLimit,
       credits: a.credits || null,
@@ -1096,6 +1177,7 @@ export function getAccountList() {
       tierModels: getTierModels(a.tier || 'unknown'),
       userStatus: a.userStatus || null,
       userStatusLastFetched: a.userStatusLastFetched || 0,
+      proxyBinding: getMaskedProxyBinding(a.id),
     };
   });
 }

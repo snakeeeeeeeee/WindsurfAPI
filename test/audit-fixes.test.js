@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { writeJsonAtomic } from '../src/fs-atomic.js';
 import { cacheKey } from '../src/cache.js';
@@ -170,12 +171,11 @@ describe('conversation-pool checkout (audit fix #3: validate-before-delete)', ()
   });
 });
 
-describe('atomic write call sites use writeJsonAtomic', () => {
-  // Static check — the four files we ported must now import the
-  // helper instead of writeFileSync. A future refactor that drops
-  // the import without re-introducing tmp+rename should fail this
-  // test rather than silently regress to the truncated-JSON bug.
-  const __dirname = new URL('.', import.meta.url).pathname.replace(/^\//, '');
+describe('durable dashboard state call sites use SQLite', () => {
+  // Static check — these long-lived stores moved off JSON files. A future
+  // refactor should keep them on the SQLite persistence layer instead of
+  // reintroducing direct writes to runtime-config/proxy/model-access/stats.
+  const __dirname = fileURLToPath(new URL('.', import.meta.url));
   const ROOT = join(__dirname, '..');
   const FILES = [
     'src/runtime-config.js',
@@ -184,10 +184,10 @@ describe('atomic write call sites use writeJsonAtomic', () => {
     'src/dashboard/model-access.js',
   ];
   for (const rel of FILES) {
-    test(`${rel} uses writeJsonAtomic (no bare writeFileSync to its config target)`, () => {
+    test(`${rel} uses SQLite helpers (no bare JSON config writes)`, () => {
       const src = readFileSync(join(ROOT, rel), 'utf8');
-      assert.match(src, /writeJsonAtomic/,
-        `${rel} should import and use writeJsonAtomic`);
+      assert.match(src, /from ['"].*db\.js['"]/,
+        `${rel} should import the SQLite persistence layer`);
       // Bare writeFileSync calls are still allowed for non-config
       // paths (e.g. an export endpoint streaming a file), but the
       // simple `writeFileSync(FILE, ...)` shape we just removed must

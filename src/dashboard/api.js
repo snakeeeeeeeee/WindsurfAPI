@@ -12,6 +12,7 @@ import {
   isAuthenticated, probeAccount, ensureLsForAccount,
   refreshCredits, refreshAllCredits,
   setAccountBlockedModels, setAccountTokens, setAccountTier,
+  clearAccountRateLimit,
   getAccountInternal, isLocalBindHost, maskApiKey, safeEqualString,
   checkLockout, failedAuthAttempt, successfulAuthAttempt,
   getDroughtSummary,
@@ -27,7 +28,7 @@ import {
 } from '../runtime-config.js';
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
-import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
+import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, removeAccountProxy, getEffectiveProxy } from './proxy-config.js';
 import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels } from '../models.js';
 import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium } from './windsurf-login.js';
 import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList } from './model-access.js';
@@ -41,6 +42,32 @@ import {
   setEnabled as setQuietWindowEnabled,
   _runOneTick as runQuietWindowTickNow,
 } from './quiet-window-updater.js';
+import {
+  clearAccountModelCooldown,
+  clearModelBreaker,
+  clearModelRateLimitEvents,
+  forceModelProbe,
+  getAvailabilityConfig,
+  getAvailabilitySnapshot,
+  pruneAvailabilityState,
+  purgeAccountAvailabilityState,
+  removeHealthyAccount,
+  setModelBreaker,
+  updateAvailabilityConfig,
+} from '../availability-router.js';
+import { getAvailabilityWorkerStatus, probeAvailabilityModelOnce, runAvailabilityWorkerOnce } from '../availability-worker.js';
+import { deleteAccountAvailabilityHistory } from '../db.js';
+import {
+  bindAccountDynamicProxy,
+  clearAccountDynamicProxy,
+  getDynamicProxyConfigMasked,
+  getDynamicProxySummary,
+  getMaskedProxyBindings,
+  rotateAccountDynamicProxy,
+  setDynamicProxyConfig,
+  verifyAccountDynamicProxy,
+} from '../dynamic-proxy.js';
+import { testProxy } from '../proxy-test.js';
 
 export function parseProxyUrl(proxy) {
   // Normalize whitespace so "socks5 127.0.0.1   1089" and
@@ -268,6 +295,81 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     return json(res, 200, { success: true, cleared: n });
   }
 
+  // ─── Availability router ──────────────────────────────
+  if (subpath === '/availability' && method === 'GET') {
+    const accounts = getAccountList();
+    await pruneAvailabilityState({ accounts, includeUntrackedModels: true, reason: 'dashboard_snapshot' });
+    return json(res, 200, {
+      ...getAvailabilitySnapshot(accounts),
+      worker: getAvailabilityWorkerStatus(),
+      dynamicProxy: getDynamicProxySummary(accounts),
+      dynamicProxyConfig: getDynamicProxyConfigMasked(),
+    });
+  }
+  if (subpath === '/availability/config' && method === 'PUT') {
+    return json(res, 200, { success: true, config: updateAvailabilityConfig(body || {}) });
+  }
+  if (subpath === '/availability/prune' && method === 'POST') {
+    const result = await pruneAvailabilityState({ accounts: getAccountList(), includeUntrackedModels: body?.includeUntrackedModels !== false, reason: 'manual_dashboard' });
+    return json(res, 200, { success: true, result });
+  }
+  if (subpath === '/availability/worker/run' && method === 'POST') {
+    const result = await runAvailabilityWorkerOnce('manual_dashboard');
+    return json(res, result.success ? 200 : 500, result);
+  }
+  const availModelProbe = subpath.match(/^\/availability\/models\/([^/]+)\/probe$/);
+  if (availModelProbe && method === 'POST') {
+    const modelKey = decodeURIComponent(availModelProbe[1]);
+    const result = await forceModelProbe(modelKey, async () => {
+      const r = await probeAvailabilityModelOnce(modelKey);
+      if (!r.success) throw new Error(r.error || 'no account passed model probe');
+      return r.results;
+    });
+    return json(res, result.ok ? 200 : 409, { success: result.ok, ...result });
+  }
+  const availModelBreakerDel = subpath.match(/^\/availability\/models\/([^/]+)\/breaker$/);
+  if (availModelBreakerDel && method === 'DELETE') {
+    const modelKey = decodeURIComponent(availModelBreakerDel[1]);
+    await clearModelBreaker(modelKey);
+    await clearModelRateLimitEvents(modelKey);
+    return json(res, 200, { success: true });
+  }
+  if (availModelBreakerDel && method === 'POST') {
+    const modelKey = decodeURIComponent(availModelBreakerDel[1]);
+    const state = String(body?.state || 'open');
+    if (!['open', 'degraded', 'half_open', 'closed'].includes(state)) return json(res, 400, { error: 'ERR_INVALID_BREAKER_STATE' });
+    const minMs = Math.max(1000, Number(body?.retryAfterMs || getAvailabilityConfig().modelBreakerMinMs || 60000));
+    const breaker = await setModelBreaker(modelKey, {
+      state,
+      reason: body?.reason || 'manual_dashboard',
+      retryAfterMs: state === 'closed' ? 0 : minMs,
+      until: state === 'closed' ? 0 : Date.now() + minMs,
+    });
+    return json(res, 200, { success: true, breaker });
+  }
+  const availAccountCd = subpath.match(/^\/availability\/accounts\/([^/]+)\/models\/([^/]+)\/cooldown$/);
+  if (availAccountCd && method === 'DELETE') {
+    const accountId = decodeURIComponent(availAccountCd[1]);
+    const modelKey = decodeURIComponent(availAccountCd[2]);
+    clearAccountRateLimit(accountId, modelKey);
+    await clearAccountModelCooldown(accountId, modelKey);
+    return json(res, 200, { success: true });
+  }
+  const availAccountProbe = subpath.match(/^\/availability\/accounts\/([^/]+)\/models\/([^/]+)\/probe$/);
+  if (availAccountProbe && method === 'POST') {
+    const accountId = decodeURIComponent(availAccountProbe[1]);
+    const modelKey = decodeURIComponent(availAccountProbe[2]);
+    const acct = getAccountInternal(accountId);
+    if (!acct) return json(res, 404, { error: 'Account not found' });
+    const result = await probeAvailabilityModelOnce(modelKey, { accountId });
+    return json(res, result.success ? 200 : 409, { account: acct.email, ...result });
+  }
+  const availHealthDel = subpath.match(/^\/availability\/models\/([^/]+)\/health\/([^/]+)$/);
+  if (availHealthDel && method === 'DELETE') {
+    await removeHealthyAccount(decodeURIComponent(availHealthDel[1]), decodeURIComponent(availHealthDel[2]));
+    return json(res, 200, { success: true });
+  }
+
   // ─── System prompts (tool reinforcement, communication) ──
   if (subpath === '/system-prompts' && method === 'GET') {
     return json(res, 200, { prompts: getSystemPrompts() });
@@ -293,6 +395,89 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     } catch (err) {
       return json(res, 200, { ok: false, error: err.message, latencyMs: Date.now() - startTime });
     }
+  }
+
+  // ─── Dynamic account proxy bindings ───────────────────
+  if (subpath === '/dynamic-proxy/config' && method === 'GET') {
+    return json(res, 200, { success: true, config: getDynamicProxyConfigMasked() });
+  }
+
+  if (subpath === '/dynamic-proxy/config' && method === 'PUT') {
+    return json(res, 200, { success: true, config: setDynamicProxyConfig(body || {}) });
+  }
+
+  if (subpath === '/dynamic-proxy/bindings' && method === 'GET') {
+    return json(res, 200, {
+      success: true,
+      bindings: getMaskedProxyBindings(),
+      summary: getDynamicProxySummary(getAccountList()),
+    });
+  }
+
+  const dynamicProxyAction = subpath.match(/^\/dynamic-proxy\/accounts\/([^/]+)\/(bind|rotate|verify)$/);
+  if (dynamicProxyAction && method === 'POST') {
+    const id = decodeURIComponent(dynamicProxyAction[1]);
+    const action = dynamicProxyAction[2];
+    try {
+      const account = getAccountList().find(a => a.id === id);
+      if (!account) return json(res, 404, { success: false, error: 'Account not found' });
+      const result = action === 'verify'
+        ? await verifyAccountDynamicProxy(id, { force: !!body?.force })
+        : action === 'rotate'
+          ? await rotateAccountDynamicProxy(id, { force: true })
+          : await bindAccountDynamicProxy(id, { force: !!body?.force });
+      ensureLsForAccount(id).catch(e => log.warn(`LS ensure failed after dynamic proxy ${action}: ${e.message}`));
+      return json(res, 200, { success: true, ...result });
+    } catch (err) {
+      return json(res, 400, { success: false, error: err.message, binding: err.binding || null });
+    }
+  }
+
+  const dynamicProxyAccount = subpath.match(/^\/dynamic-proxy\/accounts\/([^/]+)$/);
+  if (dynamicProxyAccount && method === 'DELETE') {
+    const id = decodeURIComponent(dynamicProxyAccount[1]);
+    const removed = clearAccountDynamicProxy(id);
+    const availability = await purgeAccountAvailabilityState(id, { reason: 'dynamic_proxy_cleared' });
+    return json(res, 200, { success: true, removed, availability });
+  }
+
+  const dynamicProxyBatch = subpath.match(/^\/dynamic-proxy\/batch\/(bind|rotate|verify|clear)$/);
+  if (dynamicProxyBatch && method === 'POST') {
+    const action = dynamicProxyBatch[1];
+    const ids = [...new Set((Array.isArray(body?.accountIds) ? body.accountIds : []).map(String).filter(Boolean))];
+    if (!ids.length) return json(res, 400, { success: false, error: 'accountIds required' });
+    const existing = new Set(getAccountList().map(a => a.id));
+    const results = [];
+    for (const id of ids) {
+      if (!existing.has(id)) {
+        results.push({ id, success: false, error: 'Account not found' });
+        continue;
+      }
+      try {
+        if (action === 'clear') {
+          const removed = clearAccountDynamicProxy(id);
+          await purgeAccountAvailabilityState(id, { reason: 'dynamic_proxy_batch_clear' });
+          results.push({ id, success: true, removed });
+        } else {
+          const r = action === 'verify'
+            ? await verifyAccountDynamicProxy(id, { force: !!body?.force })
+            : action === 'rotate'
+              ? await rotateAccountDynamicProxy(id, { force: true })
+              : await bindAccountDynamicProxy(id, { force: !!body?.force });
+          results.push({ id, success: true, binding: r.binding, attempts: r.attempts || 0 });
+        }
+      } catch (e) {
+        results.push({ id, success: false, error: e.message, binding: e.binding || null });
+      }
+    }
+    const successCount = results.filter(r => r.success).length;
+    return json(res, 200, {
+      success: successCount === results.length,
+      successCount,
+      failCount: results.length - successCount,
+      results,
+      summary: getDynamicProxySummary(getAccountList()),
+    });
   }
 
   // ─── v2.0.67 (#112) — Quiet-window auto-update ────────
@@ -353,7 +538,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     try {
       const before = await gitStatus();
       // Guard: working tree must be clean (ignoring untracked files like
-      // accounts.json, stats.json, runtime-config.json which live in the
+      // windsurfapi.sqlite, logs which live in the
       // repo root but aren't checked in). If the tracked files were edited
       // manually (or pushed via SFTP without a corresponding commit),
       // `git pull --ff-only` would refuse — surface a friendly error
@@ -614,12 +799,18 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // PATCH /accounts/:id
   const accountPatch = subpath.match(/^\/accounts\/([^/]+)$/);
   if (accountPatch && method === 'PATCH') {
-    const id = accountPatch[1];
-    if (body.status) setAccountStatus(id, body.status);
+    const id = decodeURIComponent(accountPatch[1]);
+    let ok = true;
+    if (body.status) ok = setAccountStatus(id, body.status, { purgeAvailability: false });
     if (body.label) updateAccountLabel(id, body.label);
     if (body.resetErrors) resetAccountErrors(id);
     if (Array.isArray(body.blockedModels)) setAccountBlockedModels(id, body.blockedModels);
     if (body.tier) setAccountTier(id, body.tier);
+    if (!ok) return json(res, 404, { success: false, error: 'Account not found' });
+    if (body.status && body.status !== 'active') {
+      const availability = await purgeAccountAvailabilityState(id, { reason: `dashboard_status_${body.status}` });
+      return json(res, 200, { success: true, availability });
+    }
     return json(res, 200, { success: true });
   }
 
@@ -639,8 +830,19 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // DELETE /accounts/:id
   const accountDel = subpath.match(/^\/accounts\/([^/]+)$/);
   if (accountDel && method === 'DELETE') {
-    const ok = removeAccount(accountDel[1]);
-    return json(res, ok ? 200 : 404, { success: ok });
+    const id = decodeURIComponent(accountDel[1]);
+    const ok = removeAccount(id, { purgeAvailability: false, purgeDurable: false });
+    if (!ok) return json(res, 404, { success: false, error: 'Account not found' });
+    const availability = await purgeAccountAvailabilityState(id, { reason: 'dashboard_delete' });
+    const dynamicProxyRemoved = clearAccountDynamicProxy(id);
+    const proxyRemoved = removeAccountProxy(id);
+    let history = { probeEvents: 0, healthHistory: 0 };
+    try {
+      history = deleteAccountAvailabilityHistory(id);
+    } catch (e) {
+      log.warn(`Dashboard account delete: failed to purge SQLite availability history for ${id}: ${e.message}`);
+    }
+    return json(res, 200, { success: true, availability, proxyRemoved, dynamicProxyRemoved, history });
   }
 
   // ─── Stats ────────────────────────────────────────────
@@ -1510,63 +1712,4 @@ async function gitStatus() {
     remoteMessage: remoteMsg,
     behind,
   };
-}
-
-async function testProxy({ host, port, username, password, type }) {
-  if (config.allowPrivateProxyHosts) {
-    await validateHostFormat(host);
-  } else {
-    await assertPublicUrlHost(host);
-  }
-  const { isSocks, createSocksTunnel } = await import('../socks.js');
-  const tls = await import('node:tls');
-  const targetHost = 'api.ipify.org';
-  const targetPort = 443;
-  const proxy = { host, port, username, password, type };
-
-  // Get a raw TCP socket — either via SOCKS5 or HTTP CONNECT
-  let socket;
-  if (isSocks(proxy)) {
-    socket = await createSocksTunnel(proxy, targetHost, targetPort, 10000);
-  } else {
-    const http = await import('node:http');
-    socket = await new Promise((resolve, reject) => {
-      const authHeader = username
-        ? { 'Proxy-Authorization': 'Basic ' + Buffer.from(`${username}:${password || ''}`).toString('base64') }
-        : {};
-      const req = http.request({
-        host, port, method: 'CONNECT',
-        path: `${targetHost}:${targetPort}`,
-        headers: { Host: `${targetHost}:${targetPort}`, ...authHeader },
-        timeout: 10000,
-      });
-      req.on('connect', (res, sock) => {
-        if (res.statusCode !== 200) { sock.destroy(); return reject(new Error(`ERR_PROXY_HTTP_ERROR:${res.statusCode}`)); }
-        resolve(sock);
-      });
-      req.on('error', (err) => reject(new Error(`ERR_CONNECTION_FAILED:${err.message}`)));
-      req.on('timeout', () => { req.destroy(); reject(new Error('ERR_TIMEOUT')); });
-      req.end();
-    });
-  }
-
-  // TLS handshake + GET to verify the tunnel works
-  return new Promise((resolve, reject) => {
-      const tlsSock = tls.connect({ socket, servername: targetHost, rejectUnauthorized: false }, () => {
-        tlsSock.write(`GET / HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\nUser-Agent: WindsurfAPI/ProxyTest\r\n\r\n`);
-      });
-      const chunks = [];
-      tlsSock.on('data', c => chunks.push(c));
-      tlsSock.on('end', () => {
-        const body = Buffer.concat(chunks).toString('utf-8');
-        const match = body.match(/\r\n\r\n([^\r\n]+)/);
-        const ip = match ? match[1].trim() : '';
-        tlsSock.destroy();
-        if (!ip || !/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
-          return reject(new Error('ERR_TLS_TUNNEL_ERROR'));
-        }
-        resolve({ egressIp: ip, type });
-      });
-      tlsSock.on('error', (err) => reject(new Error(`ERR_TLS_FAILED:${err.message}`)));
-  });
 }

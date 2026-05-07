@@ -19,6 +19,7 @@
     "accounts": "Account Pool",
     "bans": "Health Check",
     "models": "Model Control",
+    "availability": "Availability",
     "proxy": "Proxy",
     "logs": "Logs",
     "experimental": "Experimental",
@@ -31,6 +32,7 @@
     "accounts": "Account Pool",
     "bans": "Health Check",
     "models": "Model Control",
+    "availability": "Availability",
     "proxy": "Proxy Config",
     "logs": "Runtime Logs",
     "experimental": "Experimental Features",
@@ -44,6 +46,7 @@
     "windsurf-login": "Login to Windsurf via Google / GitHub / Email to get API Key",
     "accounts": "Manage account pool, probe subscription tiers and available models",
     "models": "Configure model access policies, limit available model scope",
+    "availability": "Model breakers, account/model cooldowns, healthy account pool and routing tunables",
     "proxy": "Configure global or per-account exit proxies; each dedicated proxy spawns an independent Language Server instance",
     "logs": "Receive server logs in real-time via SSE streaming",
     "stats": "Request volume, success rate, latency percentiles and account/model dimension stats",
@@ -244,13 +247,35 @@
     },
     "credentials": {
       "title": "Credentials",
-      "desc": "Rotate API_KEY and the dashboard password at runtime. Saved into runtime-config.json and applied immediately — no container restart or .env reload needed. Next request must use the new value; the current session will be asked to re-login."
+      "desc": "Rotate API_KEY and the dashboard password at runtime. Saved into SQLite and applied immediately — no container restart or .env reload needed. Next request must use the new value; the current session will be asked to re-login."
     },
     "quietWindow": {
       "title": "Auto-update on quiet window",
       "desc": "Watches per-minute request rate; if it stays at or below the threshold for the full window, auto-runs `docker compose pull && up -d`. 10-min cold-start grace; 24h cooldown after success; failure doesn't trigger cooldown. Requires /var/run/docker.sock mounted into the container (default docker-compose already does).",
       "enable": "Enable quiet-window auto-update",
       "hint": "Off by default. Current status: "
+    },
+    "availability": {
+      "config": {
+        "title": "Routing Tunables",
+        "desc": "Saved to SQLite and applied immediately"
+      },
+      "models": {
+        "title": "Model Status",
+        "desc": "Open/degraded models prefer same-family fallback or return 429"
+      },
+      "cooldowns": {
+        "title": "Account Model Cooldowns",
+        "desc": "Shared cooldowns are skipped by the router to avoid burning cooling accounts"
+      },
+      "health": {
+        "title": "Healthy Account Pool",
+        "desc": "Recently successful accounts are prioritized for the same model"
+      },
+      "fallback": {
+        "title": "Fallback Rules",
+        "desc": "Current same-family downgrade paths"
+      }
     },
     "droughtRestrict": {
       "title": "Block premium models during drought",
@@ -1024,7 +1049,8 @@
     "ERR_TOKEN_FETCH_FAILED": "Failed to fetch one-time auth token",
     "ERR_FIREBASE_TOKEN_MISSING": "Firebase response missing idToken",
     "ERR_LOCAL_IMPORT_LOOPBACK_ONLY": "Local import only available from 127.0.0.1 — open the dashboard from the host machine itself, not via a public domain",
-    "ERR_LOCAL_IMPORT_FAILED": "Failed to scan local Windsurf credentials"
+    "ERR_LOCAL_IMPORT_FAILED": "Failed to scan local Windsurf credentials",
+    "ERR_INVALID_BREAKER_STATE": "Invalid breaker state"
   },
   "footer": {
     "version": "Version",
@@ -1070,6 +1096,29 @@
       "templateHint": "{{model}} placeholder will be replaced with the requested model name."
     }
   },
+  "availability": {
+    "config": {
+      "title": "Routing Tunables",
+      "desc": "Saved to SQLite and applied immediately",
+      "trackedHint": "Model status and manual probes default to these models only; supports one rule per line, comma-separated values, and * wildcards. Models with existing cooldown/breaker/health state remain visible."
+    },
+    "models": {
+      "title": "Model Status",
+      "desc": "Open/degraded models prefer same-family fallback or return 429"
+    },
+    "cooldowns": {
+      "title": "Account Model Cooldowns",
+      "desc": "Shared cooldowns are skipped by the router to avoid burning cooling accounts"
+    },
+    "health": {
+      "title": "Healthy Account Pool",
+      "desc": "Recently successful accounts are prioritized for the same model"
+    },
+    "fallback": {
+      "title": "Fallback Rules",
+      "desc": "Current same-family downgrade paths"
+    }
+  },
   "ls": {
     "defaultInstance": "Default Instance",
     "noProxy": "No proxy",
@@ -1082,6 +1131,11 @@
     "parsed": "Parsed {{ok}} / {{total}} entries",
     "skipped": "{{n}} skipped (missing api_key/token)",
     "parseError": "JSON parse failed",
-    "empty": "No accounts to import"
+    "empty": "No accounts to import",
+    "option": {
+      "auto": "Auto detect",
+      "token": "Force Auth Token",
+      "apiKey": "Force API Key"
+    }
   }
 }

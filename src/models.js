@@ -406,7 +406,7 @@ const CURSOR_ALIASES = {
 };
 for (const [k, v] of Object.entries(CURSOR_ALIASES)) _lookup.set(k, v);
 
-function publicModelAliases() {
+export function publicModelAliases() {
   const raw = String(process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES || '').trim();
   if (!raw) return [];
   return raw

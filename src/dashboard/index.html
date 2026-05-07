@@ -1548,6 +1548,10 @@ window._firebaseOAuth = async function(provider) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         <span data-i18n="nav.models">模型控制</span>
       </a>
+      <a href="#availability" data-panel="availability">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-5"/></svg>
+        <span data-i18n="nav.availability">高可用</span>
+      </a>
       <a href="#proxy" data-panel="proxy">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
         <span data-i18n="nav.proxy">代理配置</span>
@@ -1707,9 +1711,7 @@ window._firebaseOAuth = async function(provider) {
       </div>
     </div>
 
-    <!-- JSON Import (v2.0.90+): 批量导入 {accounts:[{label, api_key}]} 格式的 JSON 文件。
-         api_key 字段支持两种值：Codeium API Key 或 Windsurf Auth Token
-         （形如 devin-session-token$eyJ...）。导入时自动识别。 -->
+    <!-- JSON account import: accepts {accounts:[{label, api_key}]} and auto-detects Codeium API Key vs Windsurf Auth Token. -->
     <div class="section">
       <div class="section-header">
         <div>
@@ -1722,9 +1724,9 @@ window._firebaseOAuth = async function(provider) {
           <div class="field" style="max-width:200px">
             <label class="field-label" data-i18n="field.jsonImport.parseAs">解析方式</label>
             <select id="wl-json-parse-as" class="select">
-              <option value="auto" selected>自动识别</option>
-              <option value="token">强制 Auth Token</option>
-              <option value="api_key">强制 API Key</option>
+              <option value="auto" selected data-i18n="jsonImport.option.auto">auto</option>
+              <option value="token" data-i18n="jsonImport.option.token">Auth Token</option>
+              <option value="api_key" data-i18n="jsonImport.option.apiKey">API Key</option>
             </select>
           </div>
           <div class="field" style="flex:2">
@@ -1747,9 +1749,7 @@ window._firebaseOAuth = async function(provider) {
       </div>
     </div>
 
-    <!-- Text Import (v2.0.91+): 批量导入 "email----password----token----auth1" 行格式的 .txt 文件。
-         每行 4 段，用 "----" 分隔。token 字段自动识别 devin-session-token$ / API Key。
-         password 与 auth1 仅留作日志/调试，实际入库走 token 字段。 -->
+    <!-- Text account import: accepts email----password----token----auth1 lines; token is the persisted credential. -->
     <div class="section">
       <div class="section-header">
         <div>
@@ -1936,13 +1936,17 @@ window._firebaseOAuth = async function(provider) {
         <div id="accounts-batch-toolbar" class="batch-toolbar">
           <span id="accounts-batch-count" class="batch-count text-xs text-muted" data-i18n="batch.notSelected">未选择账号</span>
           <button id="accounts-batch-disable" class="btn btn-outline btn-sm" disabled onclick="App.batchDisableAccounts()" data-i18n="action.batchDisable">批量禁用</button>
+          <button id="accounts-batch-bind-ip" class="btn btn-outline btn-sm" disabled onclick="App.batchDynamicProxy('bind')">批量绑定 IP</button>
+          <button id="accounts-batch-rotate-ip" class="btn btn-outline btn-sm" disabled onclick="App.batchDynamicProxy('rotate')">批量换 IP</button>
+          <button id="accounts-batch-verify-ip" class="btn btn-outline btn-sm" disabled onclick="App.batchDynamicProxy('verify')">批量验证 IP</button>
+          <button id="accounts-batch-clear-ip" class="btn btn-outline btn-sm" disabled onclick="App.batchDynamicProxy('clear')">批量清除 IP</button>
           <button id="accounts-batch-delete" class="btn btn-danger btn-sm" disabled onclick="App.batchDeleteAccounts()" data-i18n="action.batchDelete">批量删除</button>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="accounts-table">
-            <thead><tr><th class="th-select"><input type="checkbox" id="accounts-select-all" onchange="App.toggleAllAccountsSelection(this.checked)" title="全选/取消全选"></th><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th class="th-help" data-i18n="table.header.credits" data-i18n-title="creditsBar.columnTooltip" title="配额使用情况&#10;&#10;日 — 每日高级请求剩余百分比（重置频繁）&#10;周 — 每周高级请求剩余百分比（Trial 账号重点看这条）&#10;&#10;数值越高 = 剩余越多 = 越安全&#10;悬停单条进度条可查看重置时间">余额</th><th data-i18n="table.header.models">可用模型</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
+            <thead><tr><th class="th-select"><input type="checkbox" id="accounts-select-all" onchange="App.toggleAllAccountsSelection(this.checked)" title="全选/取消全选"></th><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th class="th-help" data-i18n="table.header.credits" data-i18n-title="creditsBar.columnTooltip" title="配额使用情况&#10;&#10;日 — 每日高级请求剩余百分比（重置频繁）&#10;周 — 每周高级请求剩余百分比（Trial 账号重点看这条）&#10;&#10;数值越高 = 剩余越多 = 越安全&#10;悬停单条进度条可查看重置时间">余额</th><th data-i18n="table.header.models">可用模型</th><th>可用性</th><th>代理 IP</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -2005,6 +2009,207 @@ window._firebaseOAuth = async function(provider) {
         </div>
         <div id="model-list-current" class="mt-4"></div>
         <div id="model-chips-container" class="mt-4"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Availability -->
+  <section class="panel" id="p-availability">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title" data-i18n="page.availability">高可用</h1>
+        <div class="page-subtitle" data-i18n="pageSubtitle.availability">模型 breaker、账号模型 CD、健康账号池与调度参数</div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-outline" onclick="App.loadAvailability()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.24-2.52L3 21"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.24 2.52L21 3"/><path d="M21 3v6h-6"/><path d="M3 21v-6h6"/></svg>
+          <span data-i18n="action.refresh">刷新</span>
+        </button>
+        <button class="btn btn-outline" onclick="App.pruneAvailabilityState()">清理残留状态</button>
+      </div>
+    </div>
+
+    <div class="metrics-grid" id="availability-cards"></div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">动态代理 IP</div>
+          <div class="section-desc">按账号绑定粘性动态 IP；配置保存到 SQLite，密码只保存在服务端</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="App.saveDynamicProxyConfig()">保存动态代理配置</button>
+      </div>
+      <div class="section-body">
+        <div class="field-row">
+          <div class="field"><label class="field-label">启用动态代理</label><select id="dp-enabled" class="select"><option value="1">启用</option><option value="0">关闭</option></select></div>
+          <div class="field"><label class="field-label">协议</label><select id="dp-protocol" class="select"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select></div>
+          <div class="field"><label class="field-label">主机</label><input id="dp-host" class="input" placeholder="us.novproxy.io"></div>
+          <div class="field"><label class="field-label">端口</label><input id="dp-port" class="input" type="number" min="1" max="65535"></div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field" style="grid-column:1 / span 2"><label class="field-label">用户名模板</label><input id="dp-username-template" class="input" spellcheck="false" placeholder="nfgr68136-region-{region}-st-{state}-sid-{sid}-t-{ttl}"></div>
+          <div class="field"><label class="field-label">密码</label><input id="dp-password" class="input" type="password" placeholder="留空保留已保存密码"></div>
+          <div class="field"><label class="field-label">自动绑定新账号</label><select id="dp-auto-bind" class="select"><option value="0">关闭</option><option value="1">启用</option></select></div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field"><label class="field-label">Region</label><input id="dp-region" class="input" placeholder="US"></div>
+          <div class="field"><label class="field-label">State</label><input id="dp-state" class="input" placeholder="New Jersey"></div>
+          <div class="field"><label class="field-label">TTL 分钟</label><input id="dp-ttl-minutes" class="input" type="number" min="1"></div>
+          <div class="field"><label class="field-label">提前续期 ms</label><input id="dp-renew-before-ms" class="input" type="number" min="0" step="1000"></div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field" style="grid-column:1 / span 2"><label class="field-label">验证地址</label><input id="dp-verify-url" class="input" placeholder="https://ipinfo.io/json"></div>
+          <div class="field"><label class="field-label">绑定重试次数</label><input id="dp-max-bind-retries" class="input" type="number" min="1" max="20"></div>
+          <div class="field"><label class="field-label">Worker 间隔 ms</label><input id="dp-worker-interval-ms" class="input" type="number" min="1000" step="1000"></div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field"><label class="field-label">Worker 批量账号数</label><input id="dp-worker-batch-size" class="input" type="number" min="0" max="1000"></div>
+          <div class="field"><label class="field-label">Worker 并发</label><input id="dp-worker-concurrency" class="input" type="number" min="1" max="100"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="availability.config.title">调度参数</div>
+          <div class="section-desc" data-i18n="availability.config.desc">保存后写入 SQLite 并立即生效</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="App.saveAvailabilityConfig()" data-i18n="action.save">保存</button>
+      </div>
+      <div class="section-body">
+        <div class="field-row">
+          <div class="field"><label class="field-label">mode</label><select id="av-mode" class="select"><option value="aggressive">aggressive</option><option value="conservative">conservative</option><option value="off">off</option></select></div>
+          <div class="field"><label class="field-label">自动降级</label><select id="av-auto-fallback" class="select"><option value="same_family">same_family</option><option value="off">off</option></select></div>
+          <div class="field"><label class="field-label">单模型探测账号数</label><input id="av-probe-concurrency" class="input" type="number" min="1" max="20"></div>
+          <div class="field"><label class="field-label">后台单模型并发</label><input id="av-bg-per-model" class="input" type="number" min="0" max="20"></div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field"><label class="field-label">后台全局并发</label><input id="av-bg-global" class="input" type="number" min="0" max="100"></div>
+          <div class="field"><label class="field-label">Breaker 触发次数</label><input id="av-threshold" class="input" type="number" min="1" max="50"></div>
+          <div class="field"><label class="field-label">Breaker 窗口毫秒</label><input id="av-window-ms" class="input" type="number" min="1000" step="1000"></div>
+          <div class="field"><label class="field-label">Breaker 最小冷却毫秒</label><input id="av-min-ms" class="input" type="number" min="1000" step="1000"></div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field"><label class="field-label">热池最小账号数</label><input id="av-hot-min" class="input" type="number" min="0" max="100"></div>
+          <div class="field"><label class="field-label">热池最大记录数</label><input id="av-hot-max" class="input" type="number" min="1" max="500"></div>
+          <div class="field"><label class="field-label">热池新鲜期 ms</label><input id="av-hot-fresh-ms" class="input" type="number" min="1000" step="1000"></div>
+          <div class="field"><label class="field-label">失败惩罚窗口 ms</label><input id="av-score-penalty-ms" class="input" type="number" min="1000" step="1000"></div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field"><label class="field-label">请求冷启动探测</label><select id="av-request-probe-enabled" class="select"><option value="1">启用</option><option value="0">关闭</option></select></div>
+          <div class="field"><label class="field-label">请求探测并发</label><input id="av-request-probe-concurrency" class="input" type="number" min="1" max="20"></div>
+          <div class="field"><label class="field-label">请求探测预算 ms</label><input id="av-request-probe-budget-ms" class="input" type="number" min="500" step="100"></div>
+          <div class="field"><label class="field-label">快速换号预算 ms</label><input id="av-fast-switch-budget-ms" class="input" type="number" min="500" step="100"></div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field"><label class="field-label">快速换号次数</label><input id="av-fast-switch-attempts" class="input" type="number" min="0" max="20"></div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field" style="grid-column:1 / -1">
+            <label class="field-label">关注模型规则</label>
+            <textarea id="av-tracked-model-patterns" class="textarea" rows="4" spellcheck="false" placeholder="claude-sonnet-4.6*&#10;claude-opus-4-7*"></textarea>
+            <div class="field-hint">模型状态和手动探测默认只展示/操作这些模型；支持每行一个规则、逗号分隔和 * 通配。已有 CD/breaker/健康池的异常模型仍会显示。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">主动探测 Worker</div>
+          <div class="section-desc">后台周期探测账号容量和关注模型可用性，减少用户请求首次踩冷却</div>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary btn-sm" onclick="App.saveAvailabilityConfig()">保存配置</button>
+          <button class="btn btn-outline btn-sm" onclick="App.runAvailabilityWorkerNow()">立即运行一轮</button>
+          <button class="btn btn-outline btn-sm" onclick="App.loadAvailability()">刷新状态</button>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="field-row">
+          <div class="field"><label class="field-label">启用主动探测 Worker</label><select id="av-worker-enabled" class="select"><option value="1">启用</option><option value="0">关闭</option></select></div>
+          <div class="field"><label class="field-label">探测间隔 ms</label><input id="av-worker-interval-ms" class="input" type="number" min="1000" step="1000"></div>
+          <div class="field"><label class="field-label">每轮账号数</label><input id="av-worker-batch-accounts" class="input" type="number" min="0" max="1000"></div>
+          <div class="field"><label class="field-label">每轮模型数</label><input id="av-worker-batch-models" class="input" type="number" min="0" max="100"></div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field"><label class="field-label">探测模式</label><select id="av-worker-probe-mode" class="select"><option value="cheap_only">cheap_only</option><option value="selective_model">selective_model</option><option value="aggressive_model">aggressive_model</option></select></div>
+          <div class="field"><label class="field-label">随机抖动 ms</label><input id="av-worker-jitter-ms" class="input" type="number" min="0" step="1000"></div>
+          <div class="field"><label class="field-label">单轮最大运行 ms</label><input id="av-worker-max-runtime-ms" class="input" type="number" min="5000" step="1000"></div>
+        </div>
+        <div class="metrics-grid" id="availability-worker-cards" style="margin-top:16px"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="availability.models.title">模型状态</div>
+          <div class="section-desc" data-i18n="availability.models.desc">open/degraded 时会优先同系列 fallback 或返回 429</div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap"><table id="availability-models-table"><thead><tr>
+          <th>模型</th><th>别名</th><th>状态</th><th>事件</th><th>健康账号</th><th>降级目标</th><th>重试</th><th>最后成功</th><th>操作</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">模型热池</div>
+          <div class="section-desc">每个模型当前可直接路由的高分账号池，热池不足时 Worker 会优先补齐</div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap"><table id="availability-hotpool-table"><thead><tr>
+          <th>模型</th><th>目标</th><th>可用</th><th>新鲜</th><th>缺口</th><th>平均延迟</th><th>Top 账号</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="availability.cooldowns.title">账号模型 CD</div>
+          <div class="section-desc" data-i18n="availability.cooldowns.desc">共享 CD 会被调度器跳过，避免重复烧冷却账号</div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap"><table id="availability-cooldowns-table"><thead><tr>
+          <th>账号</th><th>模型</th><th>来源</th><th>冷却到</th><th>剩余</th><th>操作</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="availability.health.title">健康账号池</div>
+          <div class="section-desc" data-i18n="availability.health.desc">最近成功账号会优先参与同模型调度</div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap"><table id="availability-health-table"><thead><tr>
+          <th>模型</th><th>账号</th><th>分数</th><th>延迟</th><th>成功/失败</th><th>最后成功</th><th>最后错误</th><th>操作</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="availability.fallback.title">Fallback 规则</div>
+          <div class="section-desc" data-i18n="availability.fallback.desc">只展示当前可用的同系列降级路径</div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap"><table id="availability-fallback-table"><thead><tr>
+          <th>原模型</th><th>降级到</th><th>供应商</th>
+        </tr></thead><tbody></tbody></table></div>
       </div>
     </div>
   </section>
@@ -2381,7 +2586,7 @@ window._firebaseOAuth = async function(provider) {
       <div class="section-header">
         <div>
           <div class="section-title" data-i18n="section.credentials.title">凭证管理</div>
-          <div class="section-desc" data-i18n="section.credentials.desc">运行时改 API_KEY 和 Dashboard 密码，写入 runtime-config.json 立即生效，不用重启容器或重读 .env。改完之后下一次请求需要用新值；当前会话会要求重新登录。</div>
+          <div class="section-desc" data-i18n="section.credentials.desc">运行时改 API_KEY 和 Dashboard 密码，写入 SQLite 立即生效，不用重启容器或重读 .env。改完之后下一次请求需要用新值；当前会话会要求重新登录。</div>
         </div>
       </div>
       <div class="section-body" style="display:grid;gap:14px">
@@ -2595,6 +2800,8 @@ const App = {
   modelAccessConfig: { mode: 'all', list: [] },
   loginHistory: JSON.parse(localStorage.getItem('wl_history') || '[]'),
   _filterTimer: null,
+  _availabilityConfigDirty: false,
+  _availabilityConfigListenersBound: false,
 
   applyLang() {
     // Delegate to new I18n system
@@ -2620,12 +2827,13 @@ const App = {
   refreshActivePanelI18n() {
     const activePanelId = document.querySelector('.panel.active')?.id?.replace(/^p-/, '');
     if (!activePanelId) return;
-    const loaders = {
-      overview: 'loadOverview', 'windsurf-login': 'loadWindsurfLogin',
-      accounts: 'loadAccounts', models: 'loadModels', proxy: 'loadProxy',
-      logs: 'loadLogs', stats: 'loadStats', bans: 'loadBans',
-      experimental: 'loadExperimental', credits: 'loadCredits',
-    };
+      const loaders = {
+        overview: 'loadOverview', 'windsurf-login': 'loadWindsurfLogin',
+        accounts: 'loadAccounts', models: 'loadModels', proxy: 'loadProxy',
+        logs: 'loadLogs', stats: 'loadStats', bans: 'loadBans',
+        availability: 'loadAvailability',
+        experimental: 'loadExperimental', credits: 'loadCredits',
+      };
     const loader = loaders[activePanelId];
     if (loader && typeof this[loader] === 'function') this[loader]();
   },
@@ -2743,25 +2951,64 @@ docker compose up -d --force-recreate</pre>
       overview: 'loadOverview', 'windsurf-login': 'loadWindsurfLogin',
       accounts: 'loadAccounts', models: 'loadModels', proxy: 'loadProxy',
       logs: 'loadLogs', stats: 'loadStats', bans: 'loadBans',
+      availability: 'loadAvailability',
       experimental: 'loadExperimental',
       credits: 'loadCredits',
     };
     if (loaders[panel]) this[loaders[panel]]();
   },
 
-  async api(method, path, body) {
+  _apiPayloadError(status, text, parseError = null) {
+    const raw = String(text || '').replace(/\s+/g, ' ').trim();
+    const preview = raw.slice(0, 220) || '(empty body)';
+    if (/^\s*</.test(String(text || ''))) {
+      return `Dashboard API 返回了 HTML（HTTP ${status}）。通常是登录过期、路径被代理到前端页，或上游/nginx 返回错误页。响应片段：${preview}`;
+    }
+    if (parseError) return `Dashboard API 返回的 JSON 无法解析（HTTP ${status}）：${parseError.message}；响应片段：${preview}`;
+    return `Dashboard API 返回了非 JSON 响应（HTTP ${status}）：${preview}`;
+  },
+
+  async api(method, path, body, options = {}) {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
     if (this.password) opts.headers['X-Dashboard-Password'] = this.password;
     if (body) opts.body = JSON.stringify(body);
+    const throwOnError = !!options.throwOnError;
+    const showToast = options.toast !== false;
     try {
       const r = await fetch('/dashboard/api' + path, opts);
-      const data = await r.json();
+      const text = await r.text();
+      const contentType = r.headers.get('content-type') || '';
+      const trimmed = text.trim();
+      let data = {};
+      if (trimmed) {
+        const shouldParseJson = contentType.includes('application/json') || trimmed.startsWith('{') || trimmed.startsWith('[');
+        if (!shouldParseJson) throw new Error(this._apiPayloadError(r.status, text));
+        try {
+          data = JSON.parse(text);
+        } catch (parseError) {
+          throw new Error(this._apiPayloadError(r.status, text, parseError));
+        }
+      }
       if (r.status === 401) {
         document.getElementById('login-overlay').classList.remove('hidden');
+        const err = new Error(data.error || 'Dashboard 登录已过期或密码不正确');
+        if (throwOnError) throw err;
         return {};
       }
+      if (!r.ok) {
+        const err = new Error(data.message || data.error || `Dashboard API 请求失败（HTTP ${r.status}）`);
+        err.status = r.status;
+        err.data = data;
+        if (throwOnError) throw err;
+        if (showToast) this.toast(err.message, 'error');
+        return data || {};
+      }
       return data;
-    } catch (e) { this.toast(e.message, 'error'); return {}; }
+    } catch (e) {
+      if (showToast) this.toast(e.message, 'error');
+      if (throwOnError) throw e;
+      return {};
+    }
   },
 
   toast(msg, type = 'success') {
@@ -3784,6 +4031,7 @@ docker compose up -d --force-recreate</pre>
     }
     const tbody = document.querySelector('#accounts-table tbody');
     const tierLabel = { pro: 'PRO', free: 'FREE', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
+    this._accountsById = new Map((d.accounts || []).map(a => [a.id, a]));
     tbody.innerHTML = (d.accounts || []).map(a => {
       const tier = a.tier || 'unknown';
       // GetUserStatus snapshot — authoritative plan/trial/credit info (may be null)
@@ -3829,6 +4077,7 @@ docker compose up -d --force-recreate</pre>
            </button>`
         : `<span class="text-xs text-dim">-</span>`;
       const rateLimitBadge = a.rateLimited ? ` <span class="badge warn">${I18n.t('card.rateLimit.badge')}</span>` : '';
+      const proxyIpCell = this.renderAccountProxyBindingCell(a);
       const rpmUsed = a.rpmUsed ?? 0;
       const rpmLimit = a.rpmLimit ?? 0;
       const rpmPct = rpmLimit > 0 ? Math.min(100, Math.round((rpmUsed / rpmLimit) * 100)) : 0;
@@ -3910,6 +4159,8 @@ docker compose up -d --force-recreate</pre>
         <td>${rpmCell}</td>
         <td>${creditCell}</td>
         <td>${capsHtml}</td>
+        <td>${this.renderAccountAvailabilityCell(a)}</td>
+        <td>${proxyIpCell}</td>
         <td><span class="badge ${a.status}">${a.status}</span>${rateLimitBadge}</td>
         <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'}">${a.errorCount}</td>
         <td class="text-sm nowrap">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
@@ -3927,8 +4178,8 @@ docker compose up -d --force-recreate</pre>
             <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${this.escJsAttr(a.id)}')">${I18n.t('action.delete')}</button>
           </div>
         </td>
-      </tr>${isExpanded ? `<tr class="account-detail-row"><td colspan="12">${this.renderAccountDetail(a)}</td></tr>` : ''}`;
-    }).join('') || `<tr class="empty-row"><td colspan="12">${I18n.t('table.empty.accounts')}</td></tr>`;
+      </tr>${isExpanded ? `<tr class="account-detail-row"><td colspan="14">${this.renderAccountDetail(a)}</td></tr>` : ''}`;
+    }).join('') || `<tr class="empty-row"><td colspan="14">${I18n.t('table.empty.accounts')}</td></tr>`;
     // Reconcile selection set against current account list — drop ids that
     // no longer exist so stale selections don't leak across reloads.
     if (this._selectedAccounts && this._selectedAccounts.size > 0) {
@@ -3945,6 +4196,7 @@ docker compose up -d --force-recreate</pre>
   _expandedAccounts: new Set(),
   _selectedAccounts: new Set(),
   _modelsCatalog: null,
+  _accountsById: new Map(),
 
   async _ensureModelsCatalog() {
     if (this._modelsCatalog) return this._modelsCatalog;
@@ -3968,6 +4220,149 @@ docker compose up -d --force-recreate</pre>
       return;
     }
     this.loadAccounts();
+  },
+
+  accountAvailabilityBadge(state) {
+    const map = {
+      healthy: ['健康', 'success'],
+      partial_cd: ['部分 CD', 'warn'],
+      global_cd: ['全局 CD', 'error'],
+      disabled: ['禁用', 'muted'],
+      error: ['异常', 'error'],
+      banned: ['封禁', 'error'],
+    };
+    const [label, kind] = map[state] || ['未知', 'info'];
+    return `<span class="badge ${kind}">${this.esc(label)}</span>`;
+  },
+
+  dynamicProxyBadge(status) {
+    const map = {
+      active: ['正常', 'success'],
+      verifying: ['验证中', 'info'],
+      rotating: ['换 IP 中', 'info'],
+      failed: ['失败', 'error'],
+      expired: ['已过期', 'warn'],
+      suspended: ['已暂停', 'muted'],
+      unbound: ['未绑定', 'muted'],
+    };
+    const [label, kind] = map[status || 'unbound'] || [status || '未知', 'info'];
+    return `<span class="badge ${kind}">${this.esc(label)}</span>`;
+  },
+
+  renderAccountProxyBindingCell(a) {
+    const b = a.proxyBinding || null;
+    if (!b) {
+      return `<button class="btn btn-ghost btn-xs" onclick="App.bindDynamicProxy('${this.escJsAttr(a.id)}')" title="给此账号绑定动态代理 IP">
+        <span style="display:flex;flex-direction:column;align-items:flex-start;gap:3px">
+          ${this.dynamicProxyBadge('unbound')}
+          <span class="text-xs text-dim">点击绑定</span>
+        </span>
+      </button>`;
+    }
+    const remain = b.remainingMs ? `${this.fmtMsDuration(b.remainingMs)} 后过期` : '-';
+    const loc = [b.country, b.region || b.city].filter(Boolean).join(' ');
+    const title = `${b.egressIp || b.host || '-'}\n${loc || '-'}\n${b.ispOrg || '-'}\n${remain}`;
+    return `<button class="btn btn-ghost btn-xs" style="min-width:126px;justify-content:flex-start" onclick="App.openDynamicProxyModal('${this.escJsAttr(a.id)}')" title="${this.esc(title)}">
+      <span style="display:flex;flex-direction:column;align-items:flex-start;gap:3px">
+        ${this.dynamicProxyBadge(b.status)}
+        <span class="text-xs">${this.esc(b.egressIp || `${b.host}:${b.port}` || '-')}</span>
+        <span class="text-xs text-dim">${this.esc(loc || remain)}</span>
+      </span>
+    </button>`;
+  },
+
+  renderAccountAvailabilityCell(a) {
+    const av = a.availability || {};
+    const cd = Number(av.cooldownCount || 0);
+    const sub = av.state === 'global_cd' && av.globalCooldownUntil
+      ? `${this.fmtMsDuration(av.globalCooldownUntil - Date.now())} 后全局恢复`
+      : cd > 0
+        ? `${cd} 个模型 CD，${av.nextAvailableAt ? this.fmtMsDuration(av.nextAvailableAt - Date.now()) + ' 后最近恢复' : '等待恢复'}`
+        : `${av.healthyModelCount || 0}/${av.trackedModelCount || 0} 个关注模型健康`;
+    return `<button class="btn btn-ghost btn-xs" style="min-width:104px;justify-content:flex-start" onclick="App.openAccountAvailabilityModal('${this.escJsAttr(a.id)}')" title="查看账号模型 CD 和健康记录">
+      <span style="display:flex;flex-direction:column;align-items:flex-start;gap:3px">
+        ${this.accountAvailabilityBadge(av.state || 'healthy')}
+        <span class="text-xs text-dim">${this.esc(sub)}</span>
+      </span>
+    </button>`;
+  },
+
+  openAccountAvailabilityModal(id) {
+    const acct = this._accountsById?.get(id);
+    if (!acct) return this.toast('账号不存在，请刷新账号列表', 'error');
+    const av = acct.availability || {};
+    const cooldownRows = (av.cooldowns || []).map(cd => `
+      <tr>
+        <td><code>${this.esc(cd.modelKey || '*')}</code></td>
+        <td>${this.esc(cd.source || '-')}</td>
+        <td>${this.fmtMsDuration(cd.remainingMs ?? ((cd.until || 0) - Date.now()))}</td>
+        <td class="text-xs nowrap">${cd.until ? new Date(cd.until).toLocaleString() : '-'}</td>
+      </tr>
+    `).join('') || '<tr class="empty-row"><td colspan="4">当前没有模型 CD</td></tr>';
+    const health = (av.healthyModels || []).slice(0, 80);
+    const healthRows = health.map(h => `
+      <tr>
+        <td><code>${this.esc(h.modelKey)}</code></td>
+        <td>${h.coolingDown ? '<span class="badge warn">CD</span>' : `<span class="badge ${h.score > 0 ? 'success' : 'warn'}">${h.score || 0}</span>`}</td>
+        <td>${h.avgLatencyMs ? this.fmtMsDuration(h.avgLatencyMs) : '-'}</td>
+        <td>${h.successCount || 0}/${h.failureCount || 0}</td>
+        <td class="text-xs nowrap">${h.lastSuccessAt ? new Date(h.lastSuccessAt).toLocaleString() : '-'}</td>
+        <td class="text-xs">${this.esc(h.lastError || '-')}</td>
+      </tr>
+    `).join('') || '<tr class="empty-row"><td colspan="6">暂无健康池记录</td></tr>';
+    const html = `
+      <div class="modal-body">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;padding:8px 10px;background:var(--surface-2);border-radius:6px">
+          <div>
+            <div style="font-weight:600">${this.esc(acct.email || acct.id)}</div>
+            <div class="text-xs text-dim">${av.healthyModelCount || 0}/${av.trackedModelCount || 0} 个关注模型健康，${av.cooldownCount || 0} 个模型 CD</div>
+          </div>
+          ${this.accountAvailabilityBadge(av.state || 'healthy')}
+        </div>
+        <div class="section-title" style="font-size:13px;margin-bottom:8px">账号模型 CD</div>
+        <div class="table-wrap" style="max-height:220px"><table><thead><tr><th>模型</th><th>来源</th><th>剩余</th><th>冷却到</th></tr></thead><tbody>${cooldownRows}</tbody></table></div>
+        <div class="section-title" style="font-size:13px;margin:14px 0 8px">健康账号池记录</div>
+        <div class="table-wrap" style="max-height:260px"><table><thead><tr><th>模型</th><th>分数</th><th>延迟</th><th>成功/失败</th><th>最后成功</th><th>最后错误</th></tr></thead><tbody>${healthRows}</tbody></table></div>
+      </div>`;
+    this.confirm('账号可用性详情', html, { html: true, wide: true, okText: '关闭', cancelText: '关闭' });
+  },
+
+  openDynamicProxyModal(id) {
+    const acct = this._accountsById?.get(id);
+    if (!acct) return this.toast('账号不存在，请刷新账号列表', 'error');
+    const b = acct.proxyBinding || null;
+    const kv = (k, v) => `<span class="k">${this.esc(k)}</span><span class="v">${v}</span>`;
+    const html = b ? `
+      <div class="modal-body">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;padding:8px 10px;background:var(--surface-2);border-radius:6px">
+          <div>
+            <div style="font-weight:600">${this.esc(acct.email || acct.id)}</div>
+            <div class="text-xs text-dim">${this.esc([b.country, b.region, b.city].filter(Boolean).join(' ') || '无地理信息')}</div>
+          </div>
+          ${this.dynamicProxyBadge(b.status)}
+        </div>
+        <div class="detail-kv" style="grid-template-columns:140px minmax(0,1fr)">
+          ${kv('出口 IP', `<code>${this.esc(b.egressIp || '-')}</code>`)}
+          ${kv('运营商', this.esc(b.ispOrg || '-'))}
+          ${kv('协议', this.esc((b.protocol || 'http').toUpperCase()))}
+          ${kv('代理入口', `<code>${this.esc(b.host || '-')}:${this.esc(String(b.port || '-'))}</code>`)}
+          ${kv('Session ID', `<code>${this.esc(b.sessionId || '-')}</code>`)}
+          ${kv('用户名', `<code>${this.esc(b.username || '-')}</code>`)}
+          ${kv('密码', b.hasPassword ? '已保存' : '未设置')}
+          ${kv('过期时间', b.expiresAt ? new Date(b.expiresAt).toLocaleString() : '-')}
+          ${kv('剩余时间', b.remainingMs ? this.fmtMsDuration(b.remainingMs) : '-')}
+          ${kv('上次验证', b.lastVerifiedAt ? new Date(b.lastVerifiedAt).toLocaleString() : '-')}
+          ${kv('失败次数', String(b.failCount || 0))}
+          ${kv('错误', `<span style="color:${b.verifyError ? 'var(--error)' : 'inherit'}">${this.esc(b.verifyError || '-')}</span>`)}
+        </div>
+        <div class="btn-group" style="margin-top:14px">
+          <button class="btn btn-outline btn-sm" onclick="App.verifyDynamicProxy('${this.escJsAttr(id)}')">验证</button>
+          <button class="btn btn-outline btn-sm" onclick="App.rotateDynamicProxy('${this.escJsAttr(id)}')">换 IP</button>
+          <button class="btn btn-danger btn-sm" onclick="App.clearDynamicProxy('${this.escJsAttr(id)}')">清除绑定</button>
+        </div>
+      </div>`
+      : `<div class="modal-body"><div class="text-sm text-muted" style="margin-bottom:12px">此账号尚未绑定动态代理 IP。</div><button class="btn btn-primary btn-sm" onclick="App.bindDynamicProxy('${this.escJsAttr(id)}')">绑定 IP</button></div>`;
+    this.confirm('动态代理 IP', html, { html: true, wide: true, okText: '关闭', cancelText: '关闭' });
   },
 
   renderAccountDetail(a) {
@@ -4508,18 +4903,26 @@ docker compose up -d --force-recreate</pre>
     const countEl = document.getElementById('accounts-batch-count');
     const disableBtn = document.getElementById('accounts-batch-disable');
     const deleteBtn = document.getElementById('accounts-batch-delete');
+    const bindIpBtn = document.getElementById('accounts-batch-bind-ip');
+    const rotateIpBtn = document.getElementById('accounts-batch-rotate-ip');
+    const verifyIpBtn = document.getElementById('accounts-batch-verify-ip');
+    const clearIpBtn = document.getElementById('accounts-batch-clear-ip');
     const selectAll = document.getElementById('accounts-select-all');
     if (countEl) {
       if (count > 0) {
-        countEl.textContent = I18n.t('batch.selectedCount', { n: count }) || `已选 ${count} 个`;
+        countEl.textContent = I18n.t('batch.selectedCount', { n: count });
         countEl.classList.add('has-selection');
       } else {
-        countEl.textContent = I18n.t('batch.notSelected') || '未选择账号';
+        countEl.textContent = I18n.t('batch.notSelected');
         countEl.classList.remove('has-selection');
       }
     }
     if (disableBtn) disableBtn.disabled = count === 0;
     if (deleteBtn) deleteBtn.disabled = count === 0;
+    if (bindIpBtn) bindIpBtn.disabled = count === 0;
+    if (rotateIpBtn) rotateIpBtn.disabled = count === 0;
+    if (verifyIpBtn) verifyIpBtn.disabled = count === 0;
+    if (clearIpBtn) clearIpBtn.disabled = count === 0;
     // Tri-state for the header checkbox: all / none / partial
     if (selectAll) {
       const total = document.querySelectorAll('#accounts-table input.acct-select').length;
@@ -4532,48 +4935,107 @@ docker compose up -d --force-recreate</pre>
     const ids = Array.from(this._selectedAccounts || []);
     if (ids.length === 0) return;
     const ok = await this.confirm(
-      I18n.t('modal.batchDisable.title') || '批量禁用账号',
-      (I18n.t('modal.batchDisable.desc', { n: ids.length }) || `确定要禁用选中的 ${ids.length} 个账号吗？`),
-      { okText: I18n.t('action.disable') || '禁用' }
+      I18n.t('modal.batchDisable.title'),
+      I18n.t('modal.batchDisable.desc', { n: ids.length }),
+      { okText: I18n.t('action.disable') }
     );
     if (!ok) return;
     let okCount = 0, failCount = 0;
+    const errors = [];
     for (const id of ids) {
-      try { await this.api('PATCH', `/accounts/${id}`, { status: 'disabled' }); okCount++; }
-      catch { failCount++; }
+      try {
+        const r = await this.api('PATCH', `/accounts/${encodeURIComponent(id)}`, { status: 'disabled' }, { throwOnError: true, toast: false });
+        if (r && r.success === false) throw new Error(r.error || '禁用失败');
+        okCount++;
+      } catch (e) {
+        failCount++;
+        errors.push(`${id}: ${e.message || e}`);
+      }
     }
     this._selectedAccounts.clear();
     await this.loadAccounts();
     this.toast(
       failCount === 0
-        ? (I18n.t('batch.disable.success', { n: okCount }) || `已禁用 ${okCount} 个账号`)
-        : (I18n.t('batch.disable.partial', { ok: okCount, fail: failCount }) || `成功 ${okCount}，失败 ${failCount}`),
+        ? I18n.t('batch.disable.success', { n: okCount })
+        : I18n.t('batch.disable.partial', { ok: okCount, fail: failCount }),
       failCount === 0 ? 'success' : 'warn'
     );
+    if (errors.length) this.toast(errors.slice(0, 3).join('；'), 'error');
   },
 
   async batchDeleteAccounts() {
     const ids = Array.from(this._selectedAccounts || []);
     if (ids.length === 0) return;
     const ok = await this.confirm(
-      I18n.t('modal.batchDelete.title') || '批量删除账号',
-      (I18n.t('modal.batchDelete.desc', { n: ids.length }) || `确定要删除选中的 ${ids.length} 个账号吗？此操作不可撤销。`),
-      { danger: true, okText: I18n.t('action.delete') || '删除' }
+      I18n.t('modal.batchDelete.title'),
+      I18n.t('modal.batchDelete.desc', { n: ids.length }),
+      { danger: true, okText: I18n.t('action.delete') }
     );
     if (!ok) return;
     let okCount = 0, failCount = 0;
+    const errors = [];
     for (const id of ids) {
-      try { await this.api('DELETE', `/accounts/${id}`); okCount++; }
-      catch { failCount++; }
+      try {
+        const r = await this.api('DELETE', `/accounts/${encodeURIComponent(id)}`, null, { throwOnError: true, toast: false });
+        if (r && r.success === false) throw new Error(r.error || '删除失败');
+        okCount++;
+      } catch (e) {
+        failCount++;
+        errors.push(`${id}: ${e.message || e}`);
+      }
     }
     this._selectedAccounts.clear();
     await this.loadAccounts();
     this.toast(
       failCount === 0
-        ? (I18n.t('batch.delete.success', { n: okCount }) || `已删除 ${okCount} 个账号`)
-        : (I18n.t('batch.delete.partial', { ok: okCount, fail: failCount }) || `成功 ${okCount}，失败 ${failCount}`),
+        ? I18n.t('batch.delete.success', { n: okCount })
+        : I18n.t('batch.delete.partial', { ok: okCount, fail: failCount }),
       failCount === 0 ? 'success' : 'warn'
     );
+    if (errors.length) this.toast(errors.slice(0, 3).join('；'), 'error');
+  },
+
+  async batchDynamicProxy(action) {
+    const ids = Array.from(this._selectedAccounts || []);
+    if (!ids.length) return;
+    const labels = { bind: '批量绑定 IP', rotate: '批量换 IP', verify: '批量验证 IP', clear: '批量清除 IP' };
+    const ok = await this.confirm(labels[action] || '批量操作', `将对 ${ids.length} 个账号执行：${labels[action] || action}`, { danger: action === 'clear', okText: labels[action] || '执行' });
+    if (!ok) return;
+    const r = await this.api('POST', `/dynamic-proxy/batch/${action}`, { accountIds: ids, force: true });
+    this.toast(`完成：成功 ${r.successCount || 0}，失败 ${r.failCount || 0}`, (r.failCount || 0) ? 'warn' : 'success');
+    await this.loadAccounts();
+    this.loadAvailability();
+  },
+
+  async bindDynamicProxy(id) {
+    this.toast('正在绑定动态 IP', 'info');
+    const r = await this.api('POST', `/dynamic-proxy/accounts/${encodeURIComponent(id)}/bind`, { force: true });
+    this.toast(r.success ? '动态 IP 已绑定' : (r.error || '绑定失败'), r.success ? 'success' : 'error');
+    this.loadAccounts();
+    this.loadAvailability();
+  },
+
+  async rotateDynamicProxy(id) {
+    this.toast('正在更换动态 IP', 'info');
+    const r = await this.api('POST', `/dynamic-proxy/accounts/${encodeURIComponent(id)}/rotate`, { force: true });
+    this.toast(r.success ? '动态 IP 已更换' : (r.error || '更换失败'), r.success ? 'success' : 'error');
+    this.loadAccounts();
+    this.loadAvailability();
+  },
+
+  async verifyDynamicProxy(id) {
+    const r = await this.api('POST', `/dynamic-proxy/accounts/${encodeURIComponent(id)}/verify`, { force: true });
+    this.toast(r.success ? '动态 IP 验证通过' : (r.error || '验证失败'), r.success ? 'success' : 'error');
+    this.loadAccounts();
+  },
+
+  async clearDynamicProxy(id) {
+    const ok = await this.confirm('清除动态 IP 绑定', id, { danger: true, okText: '清除' });
+    if (!ok) return;
+    await this.api('DELETE', `/dynamic-proxy/accounts/${encodeURIComponent(id)}`);
+    this.toast('动态 IP 绑定已清除', 'success');
+    this.loadAccounts();
+    this.loadAvailability();
   },
 
   // ─── Models ──────────────────────────────────
@@ -4701,6 +5163,61 @@ docker compose up -d --force-recreate</pre>
         </td>
       </tr>`;
     }).join('') || `<tr class="empty-row"><td colspan="3">${I18n.t('table.empty.accountsProxy')}</td></tr>`;
+  },
+
+  setDynamicProxyConfigForm(cfg = {}) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
+    set('dp-enabled', cfg.enabled ? '1' : '0');
+    set('dp-protocol', cfg.protocol || 'http');
+    set('dp-host', cfg.host || '');
+    set('dp-port', cfg.port || '');
+    set('dp-username-template', cfg.usernameTemplate || '');
+    set('dp-password', '');
+    const pass = document.getElementById('dp-password');
+    if (pass) pass.placeholder = cfg.hasPassword ? '留空保留已保存密码' : '代理密码';
+    set('dp-auto-bind', cfg.autoBindNewAccounts ? '1' : '0');
+    set('dp-region', cfg.region || '');
+    set('dp-state', cfg.state || '');
+    set('dp-ttl-minutes', cfg.ttlMinutes || '');
+    set('dp-renew-before-ms', cfg.renewBeforeMs || '');
+    set('dp-verify-url', cfg.verifyUrl || '');
+    set('dp-max-bind-retries', cfg.maxBindRetries || '');
+    set('dp-worker-interval-ms', cfg.workerIntervalMs || '');
+    set('dp-worker-batch-size', cfg.workerBatchSize || '');
+    set('dp-worker-concurrency', cfg.workerConcurrency || '');
+    this._dynamicProxyHasPassword = !!cfg.hasPassword;
+  },
+
+  getDynamicProxyConfigForm() {
+    const val = id => document.getElementById(id)?.value ?? '';
+    const num = id => Number(val(id)) || 0;
+    const cfg = {
+      enabled: val('dp-enabled') !== '0',
+      protocol: val('dp-protocol') || 'http',
+      host: val('dp-host').trim(),
+      port: num('dp-port'),
+      usernameTemplate: val('dp-username-template').trim(),
+      autoBindNewAccounts: val('dp-auto-bind') === '1',
+      region: val('dp-region').trim(),
+      state: val('dp-state').trim(),
+      ttlMinutes: num('dp-ttl-minutes'),
+      renewBeforeMs: num('dp-renew-before-ms'),
+      verifyUrl: val('dp-verify-url').trim(),
+      maxBindRetries: num('dp-max-bind-retries'),
+      workerIntervalMs: num('dp-worker-interval-ms'),
+      workerBatchSize: num('dp-worker-batch-size'),
+      workerConcurrency: num('dp-worker-concurrency'),
+    };
+    const pw = val('dp-password');
+    if (pw || !this._dynamicProxyHasPassword) cfg.password = pw;
+    return cfg;
+  },
+
+  async saveDynamicProxyConfig() {
+    const r = await this.api('PUT', '/dynamic-proxy/config', this.getDynamicProxyConfigForm());
+    this.toast(r.success ? '动态代理配置已保存' : (r.error || '保存失败'), r.success ? 'success' : 'error');
+    if (r.config) this.setDynamicProxyConfigForm(r.config);
+    this.loadAvailability();
   },
 
   async saveGlobalProxy() {
@@ -5765,7 +6282,7 @@ docker compose up -d --force-recreate</pre>
   async loadExperimental() {
     // v2.0.56: refresh the credentials snapshot whenever the user opens
     // the experimental/settings panel so the masked key + source labels
-    // stay in sync with what runtime-config.json actually holds.
+    // stay in sync with what SQLite actually holds.
     this.loadCredentials();
     const d = await this.api('GET', '/experimental');
     const cb = document.getElementById('exp-cascade-reuse');
@@ -5922,6 +6439,318 @@ docker compose up -d --force-recreate</pre>
     } catch (e) {
       this.toast(`${I18n.t('quietWindow.triggerFailed')}: ${e.message}`, 'error');
     }
+  },
+
+  // ─── Availability router ───────────────────────────────
+  fmtMsDuration(ms) {
+    const n = Math.max(0, Number(ms) || 0);
+    if (n < 1000) return '0s';
+    const s = Math.ceil(n / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ${s % 60}s`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m`;
+  },
+
+  avBadge(state) {
+    const kind = state === 'closed' ? 'success' : state === 'open' ? 'error' : state === 'degraded' ? 'warn' : 'info';
+    const labelMap = { closed: '正常', open: '打开', degraded: '降级', half_open: '半开' };
+    return `<span class="badge ${kind}">${this.esc(labelMap[state] || state || '未知')}</span>`;
+  },
+
+  bindAvailabilityConfigDirtyListeners() {
+    if (this._availabilityConfigListenersBound) return;
+    this._availabilityConfigListenersBound = true;
+    [
+      'av-mode',
+      'av-auto-fallback',
+      'av-probe-concurrency',
+      'av-bg-per-model',
+      'av-bg-global',
+      'av-threshold',
+      'av-window-ms',
+      'av-min-ms',
+      'av-hot-min',
+      'av-hot-max',
+      'av-hot-fresh-ms',
+      'av-score-penalty-ms',
+      'av-request-probe-enabled',
+      'av-request-probe-concurrency',
+      'av-request-probe-budget-ms',
+      'av-fast-switch-budget-ms',
+      'av-fast-switch-attempts',
+      'av-worker-enabled',
+      'av-worker-interval-ms',
+      'av-worker-batch-accounts',
+      'av-worker-batch-models',
+      'av-worker-probe-mode',
+      'av-worker-jitter-ms',
+      'av-worker-max-runtime-ms',
+      'av-tracked-model-patterns',
+    ].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', () => { this._availabilityConfigDirty = true; });
+      el.addEventListener('change', () => { this._availabilityConfigDirty = true; });
+    });
+  },
+
+  setAvConfigForm(cfg = {}) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
+    set('av-mode', cfg.mode || 'aggressive');
+    set('av-auto-fallback', cfg.autoFallback || 'same_family');
+    set('av-probe-concurrency', cfg.probeConcurrencyPerModel ?? 3);
+    set('av-bg-per-model', cfg.backgroundProbePerModel ?? 2);
+    set('av-bg-global', cfg.backgroundProbeGlobal ?? 5);
+    set('av-threshold', cfg.modelBreakerThreshold ?? 3);
+    set('av-window-ms', cfg.modelBreakerWindowMs ?? 3000);
+    set('av-min-ms', cfg.modelBreakerMinMs ?? 60000);
+    set('av-hot-min', cfg.hotPoolMinPerModel ?? 5);
+    set('av-hot-max', cfg.hotPoolMaxPerModel ?? 30);
+    set('av-hot-fresh-ms', cfg.hotPoolFreshMs ?? 600000);
+    set('av-score-penalty-ms', cfg.accountScoreFailurePenaltyMs ?? 300000);
+    set('av-request-probe-enabled', cfg.requestProbeEnabled === false ? '0' : '1');
+    set('av-request-probe-concurrency', cfg.requestProbeConcurrency ?? 3);
+    set('av-request-probe-budget-ms', cfg.requestProbeBudgetMs ?? 2000);
+    set('av-fast-switch-budget-ms', cfg.fastSwitchBudgetMs ?? 3000);
+    set('av-fast-switch-attempts', cfg.fastSwitchMaxAttempts ?? 2);
+    set('av-worker-enabled', cfg.workerEnabled === false ? '0' : '1');
+    set('av-worker-interval-ms', cfg.workerIntervalMs ?? 60000);
+    set('av-worker-batch-accounts', cfg.workerBatchAccounts ?? 20);
+    set('av-worker-batch-models', cfg.workerBatchModels ?? 4);
+    set('av-worker-probe-mode', cfg.workerProbeMode || 'selective_model');
+    set('av-worker-jitter-ms', cfg.workerJitterMs ?? 5000);
+    set('av-worker-max-runtime-ms', cfg.workerMaxRuntimeMs ?? 30000);
+    set('av-tracked-model-patterns', cfg.trackedModelPatterns || [
+      'claude-4.5-haiku',
+      'claude-sonnet-4.6',
+      'claude-opus-4.6',
+      'claude-opus-4-7-low',
+      'claude-opus-4-7-medium',
+      'claude-opus-4-7-high',
+      'claude-opus-4-7-xhigh',
+      'claude-opus-4-7-max',
+    ].join('\n'));
+  },
+
+  getAvConfigForm() {
+    const num = (id) => Number(document.getElementById(id)?.value || 0);
+    return {
+      mode: document.getElementById('av-mode')?.value || 'aggressive',
+      autoFallback: document.getElementById('av-auto-fallback')?.value || 'same_family',
+      probeConcurrencyPerModel: num('av-probe-concurrency'),
+      backgroundProbePerModel: num('av-bg-per-model'),
+      backgroundProbeGlobal: num('av-bg-global'),
+      modelBreakerThreshold: num('av-threshold'),
+      modelBreakerWindowMs: num('av-window-ms'),
+      modelBreakerMinMs: num('av-min-ms'),
+      hotPoolMinPerModel: num('av-hot-min'),
+      hotPoolMaxPerModel: num('av-hot-max'),
+      hotPoolFreshMs: num('av-hot-fresh-ms'),
+      accountScoreFailurePenaltyMs: num('av-score-penalty-ms'),
+      requestProbeEnabled: document.getElementById('av-request-probe-enabled')?.value !== '0',
+      requestProbeConcurrency: num('av-request-probe-concurrency'),
+      requestProbeBudgetMs: num('av-request-probe-budget-ms'),
+      fastSwitchBudgetMs: num('av-fast-switch-budget-ms'),
+      fastSwitchMaxAttempts: num('av-fast-switch-attempts'),
+      workerEnabled: document.getElementById('av-worker-enabled')?.value !== '0',
+      workerIntervalMs: num('av-worker-interval-ms'),
+      workerBatchAccounts: num('av-worker-batch-accounts'),
+      workerBatchModels: num('av-worker-batch-models'),
+      workerProbeMode: document.getElementById('av-worker-probe-mode')?.value || 'selective_model',
+      workerJitterMs: num('av-worker-jitter-ms'),
+      workerMaxRuntimeMs: num('av-worker-max-runtime-ms'),
+      trackedModelPatterns: document.getElementById('av-tracked-model-patterns')?.value || '',
+    };
+  },
+
+  async loadAvailability() {
+    const d = await this.api('GET', '/availability');
+    const cfg = d.config || {};
+    if (d.dynamicProxyConfig) this.setDynamicProxyConfigForm(d.dynamicProxyConfig);
+    this.bindAvailabilityConfigDirtyListeners();
+    if (!this._availabilityConfigDirty) this.setAvConfigForm(cfg);
+    const shared = d.sharedState || {};
+    const summary = d.summary || {};
+    const redisKind = shared.mode === 'redis' ? 'success' : shared.mode === 'memory_fallback' ? 'error' : 'warn';
+    const cards = document.getElementById('availability-cards');
+    if (cards) cards.innerHTML = `
+      <div class="card ${redisKind}"><div class="card-header"><div class="card-title">共享状态</div></div><div class="card-value" style="font-size:20px">${this.esc(shared.mode || 'memory')}</div><div class="card-sub">${this.esc(shared.lastError || (shared.redisUrlConfigured ? 'Redis 已配置' : 'Redis 未启用'))}</div></div>
+      <div class="card ${cfg.mode === 'off' ? 'warn' : 'info'}"><div class="card-header"><div class="card-title">调度模式</div></div><div class="card-value" style="font-size:20px">${this.esc(cfg.mode || '-')}</div><div class="card-sub">自动降级=${this.esc(cfg.autoFallback || '-')}</div></div>
+      <div class="card ${summary.openOrDegradedModels ? 'warn' : 'success'}"><div class="card-header"><div class="card-title">异常模型</div></div><div class="card-value">${summary.openOrDegradedModels || 0}</div><div class="card-sub">${summary.trackedModelCount || summary.modelCount || 0} 个关注 / ${summary.modelCount || 0} 个可见</div></div>
+      <div class="card ${summary.accountModelCooldowns ? 'warn' : 'success'}"><div class="card-header"><div class="card-title">账号模型 CD</div></div><div class="card-value">${summary.accountModelCooldowns || 0}</div><div class="card-sub">${summary.healthyAccounts || 0} 条健康账号记录</div></div>
+      <div class="card ${(summary.hotPoolFillRate || 0) >= 1 ? 'success' : 'warn'}"><div class="card-header"><div class="card-title">热池填充率</div></div><div class="card-value">${Math.round((summary.hotPoolFillRate || 0) * 100)}%</div><div class="card-sub">${summary.hotPoolFresh || 0}/${summary.hotPoolTarget || 0} 个新鲜热账号</div></div>
+    `;
+
+    const dyn = d.dynamicProxy || {};
+    if (cards) cards.innerHTML += `
+      <div class="card ${dyn.failed ? 'warn' : 'success'}"><div class="card-header"><div class="card-title">动态代理 IP</div></div><div class="card-value" style="font-size:20px">${dyn.bound || 0} 已绑定</div><div class="card-sub">即将过期 ${dyn.expiringSoon || 0}，失败 ${dyn.failed || 0}，未绑定 ${dyn.unbound || 0}</div></div>
+    `;
+
+    const worker = d.worker || {};
+    const wc = worker.counts || {};
+    const workerCards = document.getElementById('availability-worker-cards');
+    if (workerCards) workerCards.innerHTML = `
+      <div class="card ${worker.enabled ? (worker.running ? 'info' : 'success') : 'warn'}"><div class="card-header"><div class="card-title">运行状态</div></div><div class="card-value" style="font-size:20px">${worker.running ? '运行中' : worker.enabled ? '已启用' : '已关闭'}</div><div class="card-sub">上次原因=${this.esc(worker.lastReason || '-')}</div></div>
+      <div class="card ${worker.lastLockAcquired ? 'success' : worker.lastRunAt ? 'warn' : 'info'}"><div class="card-header"><div class="card-title">Redis Lock</div></div><div class="card-value" style="font-size:20px">${worker.lastLockAcquired ? '已拿到' : '未拿到'}</div><div class="card-sub">${worker.lastError ? this.esc(worker.lastError) : '多实例 singleflight'}</div></div>
+      <div class="card info"><div class="card-header"><div class="card-title">上轮探测</div></div><div class="card-value" style="font-size:20px">${wc.accountsChecked || 0} 账号 / ${wc.modelsChecked || 0} 模型</div><div class="card-sub">成功 ${wc.success || 0}，限流 ${wc.rateLimited || 0}，失败 ${wc.failed || 0}，跳过 ${wc.skipped || 0}</div></div>
+      <div class="card ${wc.hotPoolDeficit ? 'warn' : 'success'}"><div class="card-header"><div class="card-title">热池缺口</div></div><div class="card-value" style="font-size:20px">${wc.hotPoolDeficit || 0}</div><div class="card-sub">下轮优先：${this.esc((worker.nextPriorityModels || []).slice(0, 3).join(', ') || '-')}</div></div>
+      <div class="card info"><div class="card-header"><div class="card-title">时间</div></div><div class="card-value" style="font-size:20px">${worker.lastDurationMs ? this.fmtMsDuration(worker.lastDurationMs) : '-'}</div><div class="card-sub">上次 ${worker.lastRunAt ? new Date(worker.lastRunAt).toLocaleString() : '-'}；下次 ${worker.nextRunAt ? new Date(worker.nextRunAt).toLocaleTimeString() : '-'}</div></div>
+    `;
+
+    if (workerCards && worker.dynamicProxy) {
+      const dp = worker.dynamicProxy;
+      workerCards.innerHTML += `
+        <div class="card ${dp.failedCount ? 'warn' : dp.enabled ? 'success' : 'info'}"><div class="card-header"><div class="card-title">动态 IP Worker</div></div><div class="card-value" style="font-size:20px">${dp.checked || 0} 检查 / ${dp.rebound || 0} 换绑</div><div class="card-sub">${dp.enabled ? '已启用' : '已关闭'}；失败 ${dp.failedCount || 0}${dp.lastError ? '：' + this.esc(dp.lastError) : ''}</div></div>
+      `;
+    }
+
+    const modelsBody = document.querySelector('#availability-models-table tbody');
+    if (modelsBody) {
+      const rows = (d.modelBreakers || []).filter(m => m.tracked || m.state !== 'closed' || m.eventCount || m.healthyAccounts || m.fallbackTarget).slice(0, 200);
+      modelsBody.innerHTML = rows.map(m => `
+        <tr>
+          <td><code>${this.esc(m.modelKey)}</code></td>
+          <td class="text-xs">${this.esc((m.publicAliases || []).join(', ') || '-')}</td>
+          <td>${this.avBadge(m.state)} <span class="text-xs text-muted">${this.esc(m.reason || '')}</span></td>
+          <td>${m.eventCount || 0}</td>
+          <td>${m.hotPoolFresh || 0}/${m.hotPoolTarget || 0} <span class="text-xs text-muted">(${m.healthyAccounts || 0})</span></td>
+          <td>${m.fallbackTarget ? `<code>${this.esc(m.fallbackTarget)}</code>` : '-'}</td>
+          <td>${m.retryAfterMs ? this.fmtMsDuration(m.retryAfterMs) : '-'}</td>
+          <td class="text-xs nowrap">${m.lastSuccessAt ? new Date(m.lastSuccessAt).toLocaleString() : '-'}</td>
+          <td class="nowrap"><div class="btn-group">
+            <button class="btn btn-ghost btn-xs" onclick="App.probeAvailabilityModel('${this.escJsAttr(m.modelKey)}')">探测</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.clearAvailabilityBreaker('${this.escJsAttr(m.modelKey)}')">清除</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.setAvailabilityBreaker('${this.escJsAttr(m.modelKey)}','open')">打开</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.setAvailabilityBreaker('${this.escJsAttr(m.modelKey)}','degraded')">降级</button>
+          </div></td>
+        </tr>
+      `).join('') || `<tr class="empty-row"><td colspan="9">${I18n.t('table.empty.noData')}</td></tr>`;
+    }
+
+    const hotBody = document.querySelector('#availability-hotpool-table tbody');
+    if (hotBody) {
+      hotBody.innerHTML = (d.hotPools || []).map(p => {
+        const top = (p.topAccounts || []).slice(0, 3).map(a => `${this.esc(a.email || a.accountId)} <span class="text-xs text-muted">#${a.score}</span>`).join('<br>');
+        return `
+          <tr>
+            <td><code>${this.esc(p.modelKey)}</code></td>
+            <td>${p.target || 0}</td>
+            <td>${p.ready || 0}</td>
+            <td>${p.fresh || 0}</td>
+            <td>${p.deficit ? `<span class="badge warn">${p.deficit}</span>` : '<span class="badge success">0</span>'}</td>
+            <td>${p.avgLatencyMs ? this.fmtMsDuration(p.avgLatencyMs) : '-'}</td>
+            <td>${top || '-'}</td>
+          </tr>
+        `;
+      }).join('') || `<tr class="empty-row"><td colspan="7">${I18n.t('table.empty.noData')}</td></tr>`;
+    }
+
+    const cdBody = document.querySelector('#availability-cooldowns-table tbody');
+    if (cdBody) {
+      cdBody.innerHTML = (d.cooldowns || []).map(cd => `
+        <tr>
+          <td><div>${this.esc(cd.email || '-')}</div><code>${this.esc(cd.accountId)}</code></td>
+          <td><code>${this.esc(cd.modelKey)}</code></td>
+          <td>${this.esc(cd.source || '-')}</td>
+          <td class="text-xs nowrap">${cd.until ? new Date(cd.until).toLocaleString() : '-'}</td>
+          <td>${this.fmtMsDuration(cd.remainingMs)}</td>
+          <td class="nowrap"><div class="btn-group">
+            <button class="btn btn-ghost btn-xs" onclick="App.probeAvailabilityAccount('${this.escJsAttr(cd.accountId)}','${this.escJsAttr(cd.modelKey)}')">探测</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.clearAvailabilityCooldown('${this.escJsAttr(cd.accountId)}','${this.escJsAttr(cd.modelKey)}')">清除</button>
+          </div></td>
+        </tr>
+      `).join('') || `<tr class="empty-row"><td colspan="6">${I18n.t('table.empty.noData')}</td></tr>`;
+    }
+
+    const healthBody = document.querySelector('#availability-health-table tbody');
+    if (healthBody) {
+      healthBody.innerHTML = (d.healthyAccounts || []).slice(0, 200).map(h => `
+        <tr>
+          <td><code>${this.esc(h.modelKey)}</code></td>
+          <td><div>${this.esc(h.email || '-')}</div><code>${this.esc(h.accountId)}</code></td>
+          <td>${h.coolingDown ? '<span class="badge warn">CD</span>' : `<span class="badge ${h.score > 0 ? 'success' : 'warn'}">${h.score || 0}</span>`}</td>
+          <td>${h.avgLatencyMs ? this.fmtMsDuration(h.avgLatencyMs) : '-'}</td>
+          <td>${h.successCount || 0}/${h.failureCount || 0}</td>
+          <td class="text-xs nowrap">${h.lastSuccessAt ? new Date(h.lastSuccessAt).toLocaleString() : '-'}</td>
+          <td class="text-xs">${this.esc(h.lastError || '-')}</td>
+          <td><button class="btn btn-ghost btn-xs" onclick="App.removeAvailabilityHealth('${this.escJsAttr(h.modelKey)}','${this.escJsAttr(h.accountId)}')">移除</button></td>
+        </tr>
+      `).join('') || `<tr class="empty-row"><td colspan="8">${I18n.t('table.empty.noData')}</td></tr>`;
+    }
+
+    const fbBody = document.querySelector('#availability-fallback-table tbody');
+    if (fbBody) {
+      fbBody.innerHTML = (d.fallbackRules || []).map(f => `
+        <tr><td><code>${this.esc(f.modelKey)}</code></td><td><code>${this.esc(f.fallbackTarget)}</code></td><td>${this.esc(f.provider || '-')}</td></tr>
+      `).join('') || `<tr class="empty-row"><td colspan="3">${I18n.t('table.empty.noData')}</td></tr>`;
+    }
+    this.poll('availability', () => this.loadAvailability(), 8000);
+  },
+
+  async saveAvailabilityConfig() {
+    const r = await this.api('PUT', '/availability/config', this.getAvConfigForm());
+    if (r.success) this._availabilityConfigDirty = false;
+    this.toast(r.success ? '已保存' : (r.error || '保存失败'), r.success ? 'success' : 'error');
+    this.loadAvailability();
+  },
+
+  async runAvailabilityWorkerNow() {
+    this.toast('正在运行主动探测 Worker', 'info');
+    const r = await this.api('POST', '/availability/worker/run', {});
+    this.toast(r.success ? '主动探测完成' : (r.error || '主动探测失败'), r.success ? 'success' : 'error');
+    this.loadAvailability();
+  },
+
+  async pruneAvailabilityState() {
+    const ok = await this.confirm('清理高可用残留状态', '会删除非关注模型、已删除账号、已禁用账号对应的 Redis CD / breaker / 健康池状态。不会删除账号本身。', { danger: true, okText: '清理' });
+    if (!ok) return;
+    const r = await this.api('POST', '/availability/prune', { includeUntrackedModels: true });
+    const result = r.result || {};
+    const removed = Object.values(result).reduce((n, v) => n + (Number(v) || 0), 0);
+    this.toast(r.success ? `已清理 ${removed} 条残留状态` : (r.error || '清理失败'), r.success ? 'success' : 'error');
+    this.loadAvailability();
+  },
+
+  async probeAvailabilityModel(modelKey) {
+    this.toast(`正在探测 ${modelKey}`, 'info');
+    const r = await this.api('POST', `/availability/models/${encodeURIComponent(modelKey)}/probe`, {});
+    this.toast(r.success ? `探测通过 ${modelKey}` : (r.error || `探测失败 ${modelKey}`), r.success ? 'success' : 'error');
+    this.loadAvailability();
+  },
+
+  async clearAvailabilityBreaker(modelKey) {
+    const ok = await this.confirm('清除模型 breaker', modelKey, { okText: '清除' });
+    if (!ok) return;
+    await this.api('DELETE', `/availability/models/${encodeURIComponent(modelKey)}/breaker`);
+    this.loadAvailability();
+  },
+
+  async setAvailabilityBreaker(modelKey, state) {
+    const stateLabel = state === 'open' ? '打开' : state === 'degraded' ? '降级' : state;
+    const ok = await this.confirm(`设置为${stateLabel}`, modelKey, { okText: stateLabel });
+    if (!ok) return;
+    await this.api('POST', `/availability/models/${encodeURIComponent(modelKey)}/breaker`, { state, reason: 'manual_dashboard' });
+    this.loadAvailability();
+  },
+
+  async clearAvailabilityCooldown(accountId, modelKey) {
+    const ok = await this.confirm('清除账号模型 CD', `${accountId} / ${modelKey}`, { okText: '清除' });
+    if (!ok) return;
+    await this.api('DELETE', `/availability/accounts/${encodeURIComponent(accountId)}/models/${encodeURIComponent(modelKey)}/cooldown`);
+    this.loadAvailability();
+  },
+
+  async probeAvailabilityAccount(accountId, modelKey) {
+    const r = await this.api('POST', `/availability/accounts/${encodeURIComponent(accountId)}/models/${encodeURIComponent(modelKey)}/probe`, {});
+    this.toast(r.success ? '账号探测通过' : (r.error || '账号探测失败'), r.success ? 'success' : 'error');
+    this.loadAvailability();
+  },
+
+  async removeAvailabilityHealth(modelKey, accountId) {
+    await this.api('DELETE', `/availability/models/${encodeURIComponent(modelKey)}/health/${encodeURIComponent(accountId)}`);
+    this.loadAvailability();
   },
 
   async clearConversationPool() {

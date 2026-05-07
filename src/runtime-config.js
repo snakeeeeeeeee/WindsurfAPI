@@ -1,7 +1,7 @@
 /**
  * Runtime configuration — persistent feature toggles that can be flipped from
- * the dashboard at runtime without a restart or editing .env. Backed by a
- * small JSON file next to the project root so it survives redeploys.
+ * the dashboard at runtime without a restart or editing .env. Backed by
+ * SQLite so it survives redeploys and becomes the durable source of truth.
  *
  * Currently hosts the "experimental" feature flags + system prompts +
  * runtime-rotatable credentials (v2.0.56: API_KEY / DASHBOARD_PASSWORD can
@@ -9,13 +9,9 @@
  * this tiny: anything that needs a restart should stay in config.js / .env.
  */
 
-import { readFileSync, existsSync } from 'fs';
 import { scryptSync, randomBytes, timingSafeEqual } from 'crypto';
-import { writeJsonAtomic } from './fs-atomic.js';
-import { resolve } from 'path';
 import { config, log } from './config.js';
-
-const FILE = resolve(config.dataDir, 'runtime-config.json');
+import { getJson, setJson } from './db.js';
 
 const DEFAULTS = {
   experimental: {
@@ -51,6 +47,64 @@ const DEFAULTS = {
     cooldownHours: 24,
     coldStartGraceMs: 600000,
   },
+  // Production availability router tunables. Env values are used as boot
+  // defaults by src/availability-router.js; dashboard writes land here and
+  // take effect without a container restart.
+  availability: {
+    mode: 'aggressive',
+    probeConcurrencyPerModel: 3,
+    backgroundProbePerModel: 2,
+    backgroundProbeGlobal: 5,
+    modelBreakerMinMs: 60000,
+    modelBreakerThreshold: 3,
+    modelBreakerWindowMs: 3000,
+    autoFallback: 'same_family',
+    workerEnabled: true,
+    workerIntervalMs: 60000,
+    workerBatchAccounts: 20,
+    workerBatchModels: 4,
+    workerProbeMode: 'selective_model',
+    workerJitterMs: 5000,
+    workerMaxRuntimeMs: 30000,
+    hotPoolMinPerModel: 5,
+    hotPoolMaxPerModel: 30,
+    hotPoolFreshMs: 600000,
+    requestProbeEnabled: true,
+    requestProbeConcurrency: 3,
+    requestProbeBudgetMs: 2000,
+    fastSwitchMaxAttempts: 2,
+    fastSwitchBudgetMs: 3000,
+    accountScoreFailurePenaltyMs: 300000,
+    trackedModelPatterns: [
+      'claude-4.5-haiku',
+      'claude-sonnet-4.6',
+      'claude-opus-4.6',
+      'claude-opus-4-7-low',
+      'claude-opus-4-7-medium',
+      'claude-opus-4-7-high',
+      'claude-opus-4-7-xhigh',
+      'claude-opus-4-7-max',
+    ].join('\n'),
+  },
+  dynamicProxy: {
+    enabled: false,
+    provider: 'novproxy',
+    protocol: 'http',
+    host: 'us.novproxy.io',
+    port: 1000,
+    usernameTemplate: 'nfgr68136-region-{region}-st-{state}-sid-{sid}-t-{ttl}',
+    password: '',
+    region: 'US',
+    state: 'New Jersey',
+    ttlMinutes: 120,
+    renewBeforeMs: 900000,
+    verifyUrl: 'https://ipinfo.io/json',
+    maxBindRetries: 3,
+    autoBindNewAccounts: false,
+    workerIntervalMs: 60000,
+    workerBatchSize: 20,
+    workerConcurrency: 3,
+  },
   // System-level prompt templates injected into Cascade proto fields.
   // Editable from Dashboard so users can tune without code changes.
   systemPrompts: {
@@ -70,9 +124,28 @@ const DEFAULTS = {
     apiKey: '',
     dashboardPasswordHash: '',
   },
+  envConfig: {},
 };
 
 const SYSTEM_PROMPT_KEYS = new Set(Object.keys(DEFAULTS.systemPrompts));
+const BUSINESS_ENV_KEYS = [
+  'WINDSURFAPI_PUBLIC_MODEL_ALIASES',
+  'WINDSURFAPI_PUBLIC_MODEL_ALIAS_HIDE_TARGETS',
+  'WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS',
+  'WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS',
+  'WINDSURFAPI_ANTHROPIC_REPORTED_OUTPUT_BASIS',
+  'WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_MAX_ENTRIES',
+  'WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO',
+  'WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS',
+  'WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE',
+  'WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE',
+  'CASCADE_REUSE_HASH_SYSTEM',
+  'CASCADE_REUSE_ALLOW_SHARED_API_KEY',
+];
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
 
 function deepMerge(base, override) {
   if (!override || typeof override !== 'object') return base;
@@ -92,20 +165,144 @@ function deepMerge(base, override) {
 }
 
 let _state = structuredClone(DEFAULTS);
+let _rawState = {};
+
+function envInt(name, fallback) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback;
+}
+
+function envString(name, fallback, allowed = null) {
+  const v = String(process.env[name] || '').trim();
+  if (!v) return fallback;
+  if (allowed && !allowed.includes(v)) return fallback;
+  return v;
+}
+
+function envBool(name, fallback) {
+  const raw = String(process.env[name] || '').trim().toLowerCase();
+  if (raw === '1' || raw === 'true') return true;
+  if (raw === '0' || raw === 'false') return false;
+  return fallback;
+}
+
+function normalizePatternList(value) {
+  const raw = Array.isArray(value) ? value.join('\n') : String(value ?? '');
+  return [...new Set(raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean))].join('\n');
+}
+
+function initialAvailabilityFromEnv() {
+  const d = DEFAULTS.availability;
+  return {
+    mode: envString('WINDSURFAPI_AVAILABILITY_MODE', d.mode, ['off', 'conservative', 'aggressive']),
+    probeConcurrencyPerModel: envInt('WINDSURFAPI_PROBE_CONCURRENCY_PER_MODEL', d.probeConcurrencyPerModel),
+    backgroundProbePerModel: envInt('WINDSURFAPI_BACKGROUND_PROBE_PER_MODEL', d.backgroundProbePerModel),
+    backgroundProbeGlobal: envInt('WINDSURFAPI_BACKGROUND_PROBE_GLOBAL', d.backgroundProbeGlobal),
+    modelBreakerMinMs: envInt('WINDSURFAPI_MODEL_BREAKER_MIN_MS', d.modelBreakerMinMs),
+    modelBreakerThreshold: envInt('WINDSURFAPI_MODEL_BREAKER_THRESHOLD', d.modelBreakerThreshold),
+    modelBreakerWindowMs: envInt('WINDSURFAPI_MODEL_BREAKER_WINDOW_MS', d.modelBreakerWindowMs),
+    autoFallback: envString('WINDSURFAPI_AUTO_FALLBACK', d.autoFallback, ['off', 'same_family']),
+    workerEnabled: envBool('WINDSURFAPI_AVAILABILITY_WORKER_ENABLED', d.workerEnabled),
+    workerIntervalMs: envInt('WINDSURFAPI_AVAILABILITY_WORKER_INTERVAL_MS', d.workerIntervalMs),
+    workerBatchAccounts: envInt('WINDSURFAPI_AVAILABILITY_WORKER_BATCH_ACCOUNTS', d.workerBatchAccounts),
+    workerBatchModels: envInt('WINDSURFAPI_AVAILABILITY_WORKER_BATCH_MODELS', d.workerBatchModels),
+    workerProbeMode: envString('WINDSURFAPI_AVAILABILITY_WORKER_PROBE_MODE', d.workerProbeMode, ['cheap_only', 'selective_model', 'aggressive_model']),
+    workerJitterMs: envInt('WINDSURFAPI_AVAILABILITY_WORKER_JITTER_MS', d.workerJitterMs),
+    workerMaxRuntimeMs: envInt('WINDSURFAPI_AVAILABILITY_WORKER_MAX_RUNTIME_MS', d.workerMaxRuntimeMs),
+    hotPoolMinPerModel: envInt('WINDSURFAPI_HOT_POOL_MIN_PER_MODEL', d.hotPoolMinPerModel),
+    hotPoolMaxPerModel: envInt('WINDSURFAPI_HOT_POOL_MAX_PER_MODEL', d.hotPoolMaxPerModel),
+    hotPoolFreshMs: envInt('WINDSURFAPI_HOT_POOL_FRESH_MS', d.hotPoolFreshMs),
+    requestProbeEnabled: envBool('WINDSURFAPI_REQUEST_PROBE_ENABLED', d.requestProbeEnabled),
+    requestProbeConcurrency: envInt('WINDSURFAPI_REQUEST_PROBE_CONCURRENCY', d.requestProbeConcurrency),
+    requestProbeBudgetMs: envInt('WINDSURFAPI_REQUEST_PROBE_BUDGET_MS', d.requestProbeBudgetMs),
+    fastSwitchMaxAttempts: envInt('WINDSURFAPI_FAST_SWITCH_MAX_ATTEMPTS', d.fastSwitchMaxAttempts),
+    fastSwitchBudgetMs: envInt('WINDSURFAPI_FAST_SWITCH_BUDGET_MS', d.fastSwitchBudgetMs),
+    accountScoreFailurePenaltyMs: envInt('WINDSURFAPI_ACCOUNT_SCORE_FAILURE_PENALTY_MS', d.accountScoreFailurePenaltyMs),
+    trackedModelPatterns: normalizePatternList(envString('WINDSURFAPI_AVAILABILITY_TRACKED_MODEL_PATTERNS', d.trackedModelPatterns)) || d.trackedModelPatterns,
+  };
+}
+
+function initialBusinessEnvConfig() {
+  const out = {};
+  for (const key of BUSINESS_ENV_KEYS) {
+    const value = String(process.env[key] ?? '').trim();
+    if (value) out[key] = value;
+  }
+  return out;
+}
+
+function initialDynamicProxyFromEnv() {
+  const d = DEFAULTS.dynamicProxy;
+  return {
+    enabled: envBool('WINDSURFAPI_DYNAMIC_PROXY_ENABLED', d.enabled),
+    provider: envString('WINDSURFAPI_DYNAMIC_PROXY_PROVIDER', d.provider, ['novproxy']),
+    protocol: envString('WINDSURFAPI_DYNAMIC_PROXY_PROTOCOL', d.protocol, ['http', 'https', 'socks5']),
+    host: envString('WINDSURFAPI_DYNAMIC_PROXY_HOST', d.host),
+    port: envInt('WINDSURFAPI_DYNAMIC_PROXY_PORT', d.port),
+    usernameTemplate: envString('WINDSURFAPI_DYNAMIC_PROXY_USERNAME_TEMPLATE', d.usernameTemplate),
+    password: String(process.env.WINDSURFAPI_DYNAMIC_PROXY_PASSWORD || d.password),
+    region: envString('WINDSURFAPI_DYNAMIC_PROXY_REGION', d.region),
+    state: envString('WINDSURFAPI_DYNAMIC_PROXY_STATE', d.state),
+    ttlMinutes: envInt('WINDSURFAPI_DYNAMIC_PROXY_TTL_MINUTES', d.ttlMinutes),
+    renewBeforeMs: envInt('WINDSURFAPI_DYNAMIC_PROXY_RENEW_BEFORE_MS', d.renewBeforeMs),
+    verifyUrl: envString('WINDSURFAPI_DYNAMIC_PROXY_VERIFY_URL', d.verifyUrl),
+    maxBindRetries: envInt('WINDSURFAPI_DYNAMIC_PROXY_MAX_BIND_RETRIES', d.maxBindRetries),
+    autoBindNewAccounts: envBool('WINDSURFAPI_DYNAMIC_PROXY_AUTO_BIND_NEW_ACCOUNTS', d.autoBindNewAccounts),
+    workerIntervalMs: envInt('WINDSURFAPI_DYNAMIC_PROXY_WORKER_INTERVAL_MS', d.workerIntervalMs),
+    workerBatchSize: envInt('WINDSURFAPI_DYNAMIC_PROXY_WORKER_BATCH_SIZE', d.workerBatchSize),
+    workerConcurrency: envInt('WINDSURFAPI_DYNAMIC_PROXY_WORKER_CONCURRENCY', d.workerConcurrency),
+  };
+}
+
+function applyBusinessEnvConfig(envConfig, { authoritative = false } = {}) {
+  if (!envConfig || typeof envConfig !== 'object') return;
+  for (const key of BUSINESS_ENV_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(envConfig, key)) {
+      if (authoritative) delete process.env[key];
+      continue;
+    }
+    const value = String(envConfig[key] ?? '');
+    if (value) process.env[key] = value;
+    else if (authoritative) delete process.env[key];
+  }
+}
 
 function load() {
-  if (!existsSync(FILE)) return;
   try {
-    const raw = JSON.parse(readFileSync(FILE, 'utf-8'));
-    _state = deepMerge(DEFAULTS, raw);
+    const raw = getJson('runtime', 'config', null);
+    if (!raw) {
+      const availability = initialAvailabilityFromEnv();
+      const dynamicProxy = initialDynamicProxyFromEnv();
+      const envConfig = initialBusinessEnvConfig();
+      _rawState = Object.keys(envConfig).length ? { availability, dynamicProxy, envConfig } : { availability, dynamicProxy };
+      _state = deepMerge(DEFAULTS, _rawState);
+      applyBusinessEnvConfig(_rawState.envConfig);
+      persist();
+      return;
+    }
+    _rawState = raw && typeof raw === 'object' ? raw : {};
+    if (!hasOwn(_rawState, 'envConfig')) {
+      const envConfig = initialBusinessEnvConfig();
+      if (Object.keys(envConfig).length) _rawState = { ..._rawState, envConfig };
+    }
+    if (!hasOwn(_rawState, 'dynamicProxy')) {
+      _rawState = { ..._rawState, dynamicProxy: initialDynamicProxyFromEnv() };
+    }
+    _state = deepMerge(DEFAULTS, _rawState);
+    applyBusinessEnvConfig(_rawState.envConfig, { authoritative: true });
+    if (raw !== _rawState) persist();
   } catch (e) {
-    log.warn(`runtime-config: failed to load ${FILE}: ${e.message}`);
+    log.warn(`runtime-config: failed to load from SQLite: ${e.message}`);
   }
 }
 
 function persist() {
   try {
-    writeJsonAtomic(FILE, _state);
+    const persisted = structuredClone(_state);
+    if (!hasOwn(_rawState, 'availability')) delete persisted.availability;
+    if (!hasOwn(_rawState, 'dynamicProxy')) delete persisted.dynamicProxy;
+    if (!hasOwn(_rawState, 'envConfig')) delete persisted.envConfig;
+    setJson('runtime', 'config', persisted);
   } catch (e) {
     log.warn(`runtime-config: failed to persist: ${e.message}`);
   }
@@ -115,6 +312,105 @@ load();
 
 export function getRuntimeConfig() {
   return structuredClone(_state);
+}
+
+export function getAvailabilityRuntimeConfig() {
+  return structuredClone(_rawState.availability || {});
+}
+
+export function setAvailabilityRuntimeConfig(patch) {
+  if (!patch || typeof patch !== 'object') return getAvailabilityRuntimeConfig();
+  const current = { ...DEFAULTS.availability, ...(_state.availability || {}) };
+  const next = { ...current };
+  const numKeys = new Set([
+    'probeConcurrencyPerModel',
+    'backgroundProbePerModel',
+    'backgroundProbeGlobal',
+    'modelBreakerMinMs',
+    'modelBreakerThreshold',
+    'modelBreakerWindowMs',
+    'workerIntervalMs',
+    'workerBatchAccounts',
+    'workerBatchModels',
+    'workerJitterMs',
+    'workerMaxRuntimeMs',
+    'hotPoolMinPerModel',
+    'hotPoolMaxPerModel',
+    'hotPoolFreshMs',
+    'requestProbeConcurrency',
+    'requestProbeBudgetMs',
+    'fastSwitchMaxAttempts',
+    'fastSwitchBudgetMs',
+    'accountScoreFailurePenaltyMs',
+  ]);
+  for (const [k, v] of Object.entries(patch)) {
+    if (!(k in DEFAULTS.availability)) continue;
+    if (numKeys.has(k)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 0) next[k] = Math.round(n);
+    } else if (k === 'mode') {
+      const s = String(v || '').trim();
+      if (['off', 'conservative', 'aggressive'].includes(s)) next[k] = s;
+    } else if (k === 'autoFallback') {
+      const s = String(v || '').trim();
+      if (['off', 'same_family'].includes(s)) next[k] = s;
+    } else if (k === 'workerEnabled' || k === 'requestProbeEnabled') {
+      next[k] = v === true || v === 'true' || v === '1' || v === 1;
+    } else if (k === 'workerProbeMode') {
+      const s = String(v || '').trim();
+      if (['cheap_only', 'selective_model', 'aggressive_model'].includes(s)) next[k] = s;
+    } else if (k === 'trackedModelPatterns') {
+      const s = Array.isArray(v) ? v.join('\n') : String(v || '');
+      const normalized = [...new Set(s.split(/[\n,]+/).map(x => x.trim()).filter(Boolean))].join('\n');
+      next[k] = normalized || DEFAULTS.availability.trackedModelPatterns;
+    }
+  }
+  _state.availability = next;
+  _rawState = { ...(_rawState || {}), availability: next };
+  persist();
+  return getAvailabilityRuntimeConfig();
+}
+
+export function getDynamicProxyRuntimeConfig() {
+  return structuredClone(_rawState.dynamicProxy || {});
+}
+
+export function setDynamicProxyRuntimeConfig(patch) {
+  if (!patch || typeof patch !== 'object') return getDynamicProxyRuntimeConfig();
+  const current = { ...DEFAULTS.dynamicProxy, ...(_state.dynamicProxy || {}) };
+  const next = { ...current };
+  const numKeys = new Set([
+    'port',
+    'ttlMinutes',
+    'renewBeforeMs',
+    'maxBindRetries',
+    'workerIntervalMs',
+    'workerBatchSize',
+    'workerConcurrency',
+  ]);
+  for (const [k, v] of Object.entries(patch)) {
+    if (!(k in DEFAULTS.dynamicProxy)) continue;
+    if (numKeys.has(k)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 0) next[k] = Math.round(n);
+    } else if (k === 'enabled' || k === 'autoBindNewAccounts') {
+      next[k] = v === true || v === 'true' || v === '1' || v === 1;
+    } else if (k === 'provider') {
+      const s = String(v || '').trim();
+      if (['novproxy'].includes(s)) next[k] = s;
+    } else if (k === 'protocol') {
+      const s = String(v || '').trim().toLowerCase();
+      if (['http', 'https', 'socks5'].includes(s)) next[k] = s;
+    } else {
+      next[k] = String(v ?? '').trim();
+    }
+  }
+  if (!next.provider) next.provider = DEFAULTS.dynamicProxy.provider;
+  if (!next.protocol) next.protocol = DEFAULTS.dynamicProxy.protocol;
+  _state.dynamicProxy = next;
+  _rawState = { ...(_rawState || {}), dynamicProxy: next };
+  persist();
+  return getDynamicProxyRuntimeConfig();
 }
 
 export function getExperimental() {
@@ -238,6 +534,26 @@ export function getCredentials() {
   };
 }
 
+export function getBusinessEnvConfig() {
+  return { ...(_state.envConfig || {}) };
+}
+
+export function setBusinessEnvConfig(patch) {
+  if (!patch || typeof patch !== 'object') return getBusinessEnvConfig();
+  const next = { ...(_state.envConfig || {}) };
+  for (const [key, value] of Object.entries(patch)) {
+    if (!BUSINESS_ENV_KEYS.includes(key)) continue;
+    const v = String(value ?? '').trim();
+    if (v) next[key] = v;
+    else delete next[key];
+  }
+  _state.envConfig = next;
+  _rawState = { ...(_rawState || {}), envConfig: next };
+  applyBusinessEnvConfig(next, { authoritative: true });
+  persist();
+  return getBusinessEnvConfig();
+}
+
 /**
  * Set the runtime API key. Empty string clears the runtime override and
  * lets `config.apiKey` fall back to the env value at call sites.
@@ -292,4 +608,3 @@ import('./auth.js').then(m => {
     m.setDroughtRestrictResolver(() => isExperimentalEnabled('droughtRestrictPremium'));
   }
 }).catch(() => { /* auth not yet ready, validateApiKey falls back to env */ });
-

@@ -1,14 +1,10 @@
 /**
  * Model access control — allow/block specific models.
- * Persisted to model-access.json.
+ * Persisted to SQLite.
  */
 
-import { readFileSync, existsSync } from 'fs';
-import { writeJsonAtomic } from '../fs-atomic.js';
-import { join } from 'path';
-import { config, log } from '../config.js';
-
-const ACCESS_FILE = join(config.dataDir, 'model-access.json');
+import { log } from '../config.js';
+import { getJson, setJson } from '../db.js';
 
 // mode: 'allowlist' (only listed models allowed) | 'blocklist' (listed models blocked) | 'all' (no restrictions)
 const _config = {
@@ -18,18 +14,17 @@ const _config = {
 
 // Load
 try {
-  if (existsSync(ACCESS_FILE)) {
-    Object.assign(_config, JSON.parse(readFileSync(ACCESS_FILE, 'utf-8')));
-  }
+  const saved = getJson('model_access', 'config', null);
+  if (saved && typeof saved === 'object') Object.assign(_config, saved);
 } catch (e) {
-  log.error('Failed to load model-access.json:', e.message);
+  log.error('Failed to load model access config from SQLite:', e.message);
 }
 
 function save() {
   try {
-    writeJsonAtomic(ACCESS_FILE, _config);
+    setJson('model_access', 'config', _config);
   } catch (e) {
-    log.error('Failed to save model-access.json:', e.message);
+    log.error('Failed to save model access config:', e.message);
   }
 }
 

@@ -19,10 +19,8 @@
  * Tmp file gets unlinked on write failure so repeated failures don't
  * leak garbage in DATA_DIR.
  *
- * Used by every dashboard config persister: model-access.json,
- * proxy.json, stats.json, runtime-config.json. accounts.json already
- * uses the same pattern hand-rolled in src/auth.js (kept inline there
- * because it has its own coalescing/_saveInFlight machinery).
+ * Kept for small JSON artifacts and tests. Long-lived dashboard state now
+ * lives in SQLite (`windsurfapi.sqlite`) instead of mutable JSON files.
  */
 
 import { writeFileSync, renameSync, unlinkSync } from 'node:fs';

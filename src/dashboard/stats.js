@@ -2,12 +2,7 @@
  * Request statistics collector with debounced JSON persistence.
  */
 
-import { readFileSync, existsSync } from 'fs';
-import { writeJsonAtomic } from '../fs-atomic.js';
-import { join } from 'path';
-import { config } from '../config.js';
-
-const STATS_FILE = join(config.dataDir, 'stats.json');
+import { getJson, setJson } from '../db.js';
 
 const _state = {
   startedAt: Date.now(),
@@ -36,10 +31,8 @@ const _state = {
 
 // Load persisted stats
 try {
-  if (existsSync(STATS_FILE)) {
-    const saved = JSON.parse(readFileSync(STATS_FILE, 'utf-8'));
-    Object.assign(_state, saved);
-  }
+  const saved = getJson('stats', 'state', null);
+  if (saved && typeof saved === 'object') Object.assign(_state, saved);
 } catch {}
 
 // Debounced save
@@ -48,7 +41,7 @@ function scheduleSave() {
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => {
     try {
-      writeJsonAtomic(STATS_FILE, _state);
+      setJson('stats', 'state', _state);
     } catch {}
   }, 5000);
 }

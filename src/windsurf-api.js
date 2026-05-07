@@ -15,9 +15,9 @@
  *   - checkMessageRateLimit(apiKey, proxy)  — pre-flight rate limit check
  */
 
-import http from 'http';
 import https from 'https';
 import { log } from './config.js';
+import { createHttpConnectTunnel, isProxyError } from './proxy-test.js';
 
 const SERVER_HOSTS = [
   'server.codeium.com',
@@ -32,35 +32,7 @@ import { isSocks, createSocksTunnel } from './socks.js';
 // Tunnel HTTPS through an HTTP CONNECT proxy or SOCKS5 proxy.
 function createProxyTunnel(proxy, targetHost, targetPort) {
   if (isSocks(proxy)) return createSocksTunnel(proxy, targetHost, targetPort);
-  return new Promise((resolve, reject) => {
-    const proxyHost = proxy.host.replace(/:\d+$/, '');
-    const proxyPort = proxy.port || 8080;
-    const req = http.request({
-      host: proxyHost,
-      port: proxyPort,
-      method: 'CONNECT',
-      path: `${targetHost}:${targetPort}`,
-      headers: {
-        Host: `${targetHost}:${targetPort}`,
-        ...(proxy.username ? {
-          'Proxy-Authorization': `Basic ${Buffer.from(`${proxy.username}:${proxy.password || ''}`).toString('base64')}`,
-        } : {}),
-      },
-    });
-    req.on('connect', (res, socket) => {
-      if (res.statusCode === 200) resolve(socket);
-      else { socket.destroy(); reject(new Error(`Proxy CONNECT failed: ${res.statusCode}`)); }
-    });
-    req.on('error', (err) => reject(new Error(`Proxy tunnel: ${err.message}`)));
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Proxy tunnel timeout')); });
-    req.end();
-  });
-}
-
-/** Detect errors caused by the proxy itself (not the upstream API). */
-function isProxyError(err) {
-  const m = err?.message || '';
-  return /Proxy CONNECT failed|Proxy tunnel|Proxy connection/i.test(m);
+  return createHttpConnectTunnel(proxy, targetHost, targetPort, 15000);
 }
 
 function postJson(host, path, body, proxy) {
@@ -135,8 +107,9 @@ export async function getUserStatus(apiKey, proxy = null) {
     },
   };
 
-  // Try with proxy first, then retry direct if proxy itself fails (407 etc.).
-  const proxyModes = proxy ? [proxy, null] : [null];
+  // Try with proxy first, then retry direct if proxy itself fails. Dynamic
+  // account proxy bindings are strict: direct fallback would hide IP failure.
+  const proxyModes = proxy ? (proxy.strict ? [proxy] : [proxy, null]) : [null];
   let lastErr = null;
   for (const px of proxyModes) {
     for (const host of SERVER_HOSTS) {
@@ -150,7 +123,7 @@ export async function getUserStatus(apiKey, proxy = null) {
       } catch (e) {
         lastErr = e;
         log.debug(`getCreditUsage ${host} failed: ${e.message}`);
-        if (px && isProxyError(e)) break; // skip second host, go straight to direct
+        if (px && isProxyError(e)) break;
       }
     }
   }
@@ -235,7 +208,7 @@ function buildMetadata(apiKey) {
 export async function getCascadeModelConfigs(apiKey, proxy = null) {
   const body = { metadata: buildMetadata(apiKey) };
 
-  const proxyModes = proxy ? [proxy, null] : [null];
+  const proxyModes = proxy ? (proxy.strict ? [proxy] : [proxy, null]) : [null];
   let lastErr = null;
   for (const px of proxyModes) {
     for (const host of SERVER_HOSTS) {
@@ -349,7 +322,7 @@ export async function registerWithFirebaseToken(firebaseToken, opts = {}) {
 export async function checkMessageRateLimit(apiKey, proxy = null) {
   const body = { metadata: buildMetadata(apiKey) };
 
-  const proxyModes = proxy ? [proxy, null] : [null];
+  const proxyModes = proxy ? (proxy.strict ? [proxy] : [proxy, null]) : [null];
   let lastErr = null;
   for (const px of proxyModes) {
     for (const host of SERVER_HOSTS) {

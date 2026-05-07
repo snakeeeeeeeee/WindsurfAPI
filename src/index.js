@@ -12,6 +12,8 @@ import { fileURLToPath } from 'url';
 import { VERSION, BRAND } from './version.js';
 import { abortActiveSse } from './sse-registry.js';
 import { startQuietWindowAutoUpdate, stopQuietWindowAutoUpdate } from './dashboard/quiet-window-updater.js';
+import { startAvailabilityStateSync, stopAvailabilityStateSync } from './availability-router.js';
+import { startAvailabilityWorker, stopAvailabilityWorker } from './availability-worker.js';
 export { VERSION, BRAND };
 
 function workspaceBase() {
@@ -137,6 +139,8 @@ async function main() {
   // Runs alongside the HTTP server; ticks every minute, polls the request
   // ring + cooldown gates, fires runDockerSelfUpdate during real lulls.
   try { startQuietWindowAutoUpdate(); } catch (e) { log.warn(`quiet-window: failed to start: ${e.message}`); }
+  try { startAvailabilityStateSync(); } catch (e) { log.warn(`availability: failed to start state sync: ${e.message}`); }
+  try { startAvailabilityWorker(); } catch (e) { log.warn(`availability-worker: failed to start: ${e.message}`); }
 
   let shuttingDown = false;
   const shutdown = (signal) => {
@@ -154,6 +158,8 @@ async function main() {
       // saves would otherwise be killed by the exit below.
       try { saveAccountsSync(); } catch {}
       try { stopQuietWindowAutoUpdate(); } catch {}
+      try { stopAvailabilityStateSync(); } catch {}
+      try { stopAvailabilityWorker(); } catch {}
       try { stopLanguageServer(); } catch {}
       process.exit(0);
     });
@@ -161,6 +167,8 @@ async function main() {
       log.warn('Drain timeout, forcing exit');
       try { saveAccountsSync(); } catch {}
       try { stopQuietWindowAutoUpdate(); } catch {}
+      try { stopAvailabilityStateSync(); } catch {}
+      try { stopAvailabilityWorker(); } catch {}
       try { stopLanguageServer(); } catch {}
       process.exit(0);
     }, 30_000);

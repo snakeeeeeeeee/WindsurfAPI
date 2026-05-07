@@ -10,7 +10,7 @@
     "test": "node --test test/*.test.js"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.5.0"
   },
   "license": "MIT",
   "author": "dwgx <somdhmtb@gmail.com> (https://github.com/dwgx)",

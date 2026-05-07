@@ -19,6 +19,7 @@
     "accounts": "账号管理",
     "bans": "异常监测",
     "models": "模型控制",
+    "availability": "高可用",
     "proxy": "代理配置",
     "logs": "运行日志",
     "experimental": "实验性功能",
@@ -34,6 +35,7 @@
     "accounts": "账号管理",
     "bans": "异常监测",
     "models": "模型控制",
+    "availability": "高可用",
     "proxy": "代理配置",
     "logs": "运行日志",
     "experimental": "实验性功能",
@@ -44,6 +46,7 @@
     "windsurf-login": "支持 Google / GitHub / 邮箱密码 三种方式登录 Windsurf 获取 API Key",
     "accounts": "维护账号池，探测各账号订阅层级与可用模型",
     "models": "配置模型访问策略，限制可用模型范围",
+    "availability": "模型 breaker、账号模型 CD、健康账号池与调度参数",
     "proxy": "全局或按账号配置出口代理，独立代理将启动独立的语言服务器实例",
     "logs": "通过 SSE 实时流式接收服务端日志",
     "stats": "请求量、成功率、延迟分位数与账号/模型维度统计",
@@ -244,7 +247,7 @@
     },
     "credentials": {
       "title": "凭证管理",
-      "desc": "运行时改 API_KEY 和 Dashboard 密码，写入 runtime-config.json 立即生效，不用重启容器或重读 .env。改完之后下一次请求需要用新值；当前会话会要求重新登录。"
+      "desc": "运行时改 API_KEY 和 Dashboard 密码，写入 SQLite 立即生效，不用重启容器或重读 .env。改完之后下一次请求需要用新值；当前会话会要求重新登录。"
     },
     "droughtRestrict": {
       "title": "配额低水位时屏蔽 premium 模型",
@@ -257,6 +260,28 @@
       "desc": "每分钟看一次最近 5 分钟内的请求量，连续在阈值以下就自动 docker compose pull + recreate。冷启动 10 分钟内不动；成功后 24 小时冷却；失败不冷却。需要 /var/run/docker.sock 挂进容器（默认 docker-compose 已挂）。",
       "enable": "启用空档自动更新",
       "hint": "默认关闭。当前状态："
+    },
+    "availability": {
+      "config": {
+        "title": "调度参数",
+        "desc": "保存后写入 SQLite 并立即生效"
+      },
+      "models": {
+        "title": "模型状态",
+        "desc": "open/degraded 时会优先同系列 fallback 或返回 429"
+      },
+      "cooldowns": {
+        "title": "账号模型 CD",
+        "desc": "共享 CD 会被调度器跳过，避免重复烧冷却账号"
+      },
+      "health": {
+        "title": "健康账号池",
+        "desc": "最近成功账号会优先参与同模型调度"
+      },
+      "fallback": {
+        "title": "Fallback 规则",
+        "desc": "只展示当前可用的同系列降级路径"
+      }
     },
     "skin": {
       "title": "界面风格",
@@ -1017,7 +1042,8 @@
     "ERR_TOKEN_FETCH_FAILED": "获取一次性 Auth Token 失败",
     "ERR_FIREBASE_TOKEN_MISSING": "Firebase 回应缺少 idToken",
     "ERR_LOCAL_IMPORT_LOOPBACK_ONLY": "本地导入仅限 127.0.0.1 访问 — 请在部署服务器本机的浏览器里打开 dashboard，不要用公网域名",
-    "ERR_LOCAL_IMPORT_FAILED": "扫描本地 Windsurf 凭证失败"
+    "ERR_LOCAL_IMPORT_FAILED": "扫描本地 Windsurf 凭证失败",
+    "ERR_INVALID_BREAKER_STATE": "breaker 状态无效"
   },
   "footer": {
     "version": "版本",
@@ -1063,6 +1089,29 @@
       "templateHint": "{{model}} 占位符会被替换成请求的模型名。"
     }
   },
+  "availability": {
+    "config": {
+      "title": "调度参数",
+      "desc": "保存后写入 SQLite 并立即生效",
+      "trackedHint": "模型状态和手动探测默认只展示/操作这些模型；支持每行一个规则、逗号分隔和 * 通配。已有 CD/breaker/健康池的异常模型仍会显示。"
+    },
+    "models": {
+      "title": "模型状态",
+      "desc": "open/degraded 时会优先同系列 fallback 或返回 429"
+    },
+    "cooldowns": {
+      "title": "账号模型 CD",
+      "desc": "共享 CD 会被调度器跳过，避免重复烧冷却账号"
+    },
+    "health": {
+      "title": "健康账号池",
+      "desc": "最近成功账号会优先参与同模型调度"
+    },
+    "fallback": {
+      "title": "Fallback 规则",
+      "desc": "只展示当前可用的同系列降级路径"
+    }
+  },
   "ls": {
     "defaultInstance": "默认实例",
     "noProxy": "无代理",
@@ -1075,7 +1124,12 @@
     "parsed": "已解析 {{ok}} / {{total}} 条",
     "skipped": "{{n}} 条因缺少 api_key/token 跳过",
     "parseError": "JSON 解析失败",
-    "empty": "没有可导入的账号"
+    "empty": "没有可导入的账号",
+    "option": {
+      "auto": "自动识别",
+      "token": "强制 Auth Token",
+      "apiKey": "强制 API Key"
+    }
   },
   "textImport": {
     "readError": "读取文本文件失败",
