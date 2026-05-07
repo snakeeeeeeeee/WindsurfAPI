@@ -106,6 +106,39 @@ describe('SQLite persistence layer', () => {
     assert.equal(again.getJson('runtime', 'config').availability.mode, 'aggressive');
   });
 
+  it('preserves dynamic proxy bindings when accounts are saved without deletion', async () => {
+    const db = await loadDb();
+    db.replaceAccountsJson([
+      { id: 'acct-a', email: 'a@example.com', apiKey: 'key-a', status: 'active' },
+      { id: 'acct-b', email: 'b@example.com', apiKey: 'key-b', status: 'active' },
+    ]);
+    db.saveAccountProxyBinding({
+      accountId: 'acct-a',
+      provider: 'novproxy',
+      protocol: 'http',
+      host: 'us.novproxy.io',
+      port: 1000,
+      username: 'user-a',
+      password: 'pw-a',
+      status: 'active',
+      egressIp: '73.197.251.49',
+      expiresAt: Date.now() + 60000,
+    });
+
+    db.replaceAccountsJson([
+      { id: 'acct-a', email: 'a-renamed@example.com', apiKey: 'key-a', status: 'active' },
+      { id: 'acct-b', email: 'b@example.com', apiKey: 'key-b', status: 'disabled' },
+    ]);
+
+    assert.equal(db.getAccountProxyBinding('acct-a').egressIp, '73.197.251.49');
+
+    db.replaceAccountsJson([
+      { id: 'acct-b', email: 'b@example.com', apiKey: 'key-b', status: 'disabled' },
+    ]);
+
+    assert.equal(db.getAccountProxyBinding('acct-a'), null);
+  });
+
   it('records worker/probe/health history rows without throwing', async () => {
     const db = await loadDb();
     const runId = db.recordAvailabilityWorkerRun({

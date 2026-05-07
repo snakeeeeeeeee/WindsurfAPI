@@ -321,7 +321,7 @@ function insertAccountRaw(db, account) {
     row.json,
     nowMs()
   );
-  return true;
+  return row.id;
 }
 
 function databaseHasDurableData(db) {
@@ -445,8 +445,16 @@ export function replaceAccountsJson(accountList = []) {
   const db = openDatabase();
   try {
     db.exec('BEGIN IMMEDIATE');
-    db.prepare('DELETE FROM accounts').run();
-    for (const account of accountList || []) insertAccountRaw(db, account);
+    const keepIds = new Set();
+    for (const account of accountList || []) {
+      const id = insertAccountRaw(db, account);
+      if (id) keepIds.add(String(id));
+    }
+    const existingIds = db.prepare('SELECT id FROM accounts').all().map(row => String(row.id));
+    const deleteStmt = db.prepare('DELETE FROM accounts WHERE id = ?');
+    for (const id of existingIds) {
+      if (!keepIds.has(id)) deleteStmt.run(id);
+    }
     db.exec('COMMIT');
   } catch (e) {
     try { db.exec('ROLLBACK'); } catch {}
