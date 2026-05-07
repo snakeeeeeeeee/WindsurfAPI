@@ -45,9 +45,9 @@ const VERSION_INFO = (() => {
   return { version: VERSION, commit, commitMessage, commitDate, branch };
 })();
 
-// 10 MB is way above any realistic chat-completions payload while still
+// 25 MB leaves room for long-context Anthropic payloads while still
 // bounding worst-case memory from a malicious/broken client.
-const MAX_BODY_SIZE = 10 * 1024 * 1024;
+const MAX_BODY_SIZE = 25 * 1024 * 1024;
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
