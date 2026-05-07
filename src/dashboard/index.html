@@ -263,6 +263,34 @@ code {
   margin-right: 4px;
 }
 .batch-count.has-selection { color: var(--accent); font-weight: 600; }
+.account-proxy-summary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.account-proxy-summary .mini-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  min-width: 92px;
+}
+.account-proxy-summary .mini-stat span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.account-proxy-summary .mini-stat b {
+  color: var(--text);
+  font-size: 14px;
+}
+.account-proxy-summary .mini-stat.success b { color: var(--success); }
+.account-proxy-summary .mini-stat.error b { color: var(--error); }
 
 /* Selection column — keep narrow so the table layout doesn't shift */
 #accounts-table th.th-select,
@@ -1944,6 +1972,7 @@ window._firebaseOAuth = async function(provider) {
         </div>
       </div>
       <div class="section-body tight">
+        <div id="accounts-proxy-summary" class="account-proxy-summary"></div>
         <div class="table-wrap">
           <table id="accounts-table">
             <thead><tr><th class="th-select"><input type="checkbox" id="accounts-select-all" onchange="App.toggleAllAccountsSelection(this.checked)" title="全选/取消全选"></th><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th class="th-help" data-i18n="table.header.credits" data-i18n-title="creditsBar.columnTooltip" title="配额使用情况&#10;&#10;日 — 每日高级请求剩余百分比（重置频繁）&#10;周 — 每周高级请求剩余百分比（Trial 账号重点看这条）&#10;&#10;数值越高 = 剩余越多 = 越安全&#10;悬停单条进度条可查看重置时间">余额</th><th data-i18n="table.header.models">可用模型</th><th>可用性</th><th>代理 IP</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
@@ -4032,6 +4061,7 @@ docker compose up -d --force-recreate</pre>
     const tbody = document.querySelector('#accounts-table tbody');
     const tierLabel = { pro: 'PRO', free: 'FREE', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
     this._accountsById = new Map((d.accounts || []).map(a => [a.id, a]));
+    this.renderAccountsProxySummary(d.accounts || []);
     tbody.innerHTML = (d.accounts || []).map(a => {
       const tier = a.tier || 'unknown';
       // GetUserStatus snapshot — authoritative plan/trial/credit info (may be null)
@@ -4196,6 +4226,29 @@ docker compose up -d --force-recreate</pre>
   _expandedAccounts: new Set(),
   _selectedAccounts: new Set(),
   _modelsCatalog: null,
+
+  renderAccountsProxySummary(accounts) {
+    const el = document.getElementById('accounts-proxy-summary');
+    if (!el) return;
+    const total = accounts.length;
+    const active = accounts.filter(a => a.status === 'active').length;
+    const bound = accounts.filter(a => a.proxyBinding?.status === 'active').length;
+    const failed = accounts.filter(a => ['failed', 'expired'].includes(a.proxyBinding?.status)).length;
+    const pending = accounts.filter(a => ['verifying', 'rotating'].includes(a.proxyBinding?.status)).length;
+    const suspended = accounts.filter(a => a.proxyBinding?.status === 'suspended').length;
+    const anyBinding = accounts.filter(a => !!a.proxyBinding).length;
+    const unbound = Math.max(0, total - anyBinding);
+    const coverage = total ? Math.round((bound / total) * 100) : 0;
+    el.innerHTML = `
+      <div class="mini-stat"><span>总账号</span><b>${total}</b></div>
+      <div class="mini-stat"><span>active</span><b>${active}</b></div>
+      <div class="mini-stat success"><span>已绑定 IP</span><b>${bound}</b></div>
+      <div class="mini-stat"><span>未绑定 IP</span><b>${unbound}</b></div>
+      <div class="mini-stat ${failed ? 'error' : ''}"><span>失败/过期</span><b>${failed}</b></div>
+      <div class="mini-stat"><span>验证/换 IP 中</span><b>${pending}</b></div>
+      <div class="mini-stat"><span>已暂停</span><b>${suspended}</b></div>
+      <div class="mini-stat"><span>覆盖率</span><b>${coverage}%</b></div>`;
+  },
   _accountsById: new Map(),
 
   async _ensureModelsCatalog() {
@@ -5003,6 +5056,15 @@ docker compose up -d --force-recreate</pre>
     if (!ok) return;
     const r = await this.api('POST', `/dynamic-proxy/batch/${action}`, { accountIds: ids, force: true });
     this.toast(`完成：成功 ${r.successCount || 0}，失败 ${r.failCount || 0}`, (r.failCount || 0) ? 'warn' : 'success');
+    const failed = (r.results || []).filter(x => !x.success);
+    if (failed.length) {
+      const msg = failed.slice(0, 5).map(x => {
+        const acct = this._accountsById?.get(x.id);
+        return `${acct?.email || x.id}: ${x.error || '失败'}`;
+      }).join('；');
+      this.toast(msg, 'error');
+    }
+    this._selectedAccounts.clear();
     await this.loadAccounts();
     this.loadAvailability();
   },
