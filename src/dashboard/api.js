@@ -1269,6 +1269,90 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
   }
 
+  // ─── Import accounts (v2.0.90+) ───────────────────────────
+  // POST /import-accounts — bulk-register already-obtained credentials into
+  // the account pool. Source formats the dashboard collects:
+  //   (1) JSON:  { accounts:[{label, api_key}], parseAs }
+  //   (2) Text:  { accounts:[{label, api_key, password?, auth1?}], parseAs }
+  //       derived from "email----password----token----auth1" lines.
+  //
+  // api_key auto-detection (parseAs='auto', default):
+  //   • devin-session-token$…   → addAccountByKey (Devin path; sessionToken
+  //                                is accepted as apiKey by GetUserStatus;
+  //                                see windsurf-login.js around L470).
+  //   • sk-ws- / sk-…           → addAccountByKey (Codeium issued apiKey).
+  //   • eyJ… / other JWT-ish    → addAccountByToken (Firebase idToken →
+  //                                registerWithCodeium → apiKey).
+  // parseAs=token / api_key forces the corresponding branch, letting the
+  // operator override when they know the field's origin.
+  if (subpath === '/import-accounts' && method === 'POST') {
+    try {
+      const { accounts, parseAs = 'auto' } = body || {};
+      if (!Array.isArray(accounts) || !accounts.length) {
+        return json(res, 400, { error: 'ERR_ACCOUNTS_REQUIRED' });
+      }
+      const normMode = ['auto', 'token', 'api_key'].includes(parseAs) ? parseAs : 'auto';
+
+      const detect = (value) => {
+        const v = String(value || '').trim();
+        if (!v) return 'invalid';
+        if (v.startsWith('devin-session-token$')) return 'api_key';
+        if (/^sk-[A-Za-z0-9_-]{4,}/.test(v)) return 'api_key';
+        if (/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v)) return 'token';
+        // Fallback — anything that still smells like a JWT / long opaque
+        // blob goes through the registerWithCodeium branch so a typo'd
+        // api_key surfaces as ERR_REGISTER rather than a silent pool add.
+        if (v.length > 120 && v.includes('.')) return 'token';
+        return 'api_key';
+      };
+
+      const results = [];
+      for (const item of accounts) {
+        const label = String(item?.label || '').trim();
+        const rawKey = String(item?.api_key || item?.token || '').trim();
+        if (!rawKey) {
+          results.push({ success: false, label, email: label, error: 'ERR_API_KEY_REQUIRED' });
+          continue;
+        }
+        const mode = normMode === 'auto' ? detect(rawKey) : normMode;
+        if (mode === 'invalid') {
+          results.push({ success: false, label, email: label, error: 'ERR_API_KEY_INVALID' });
+          continue;
+        }
+        try {
+          const account = mode === 'token'
+            ? await addAccountByToken(rawKey, label)
+            : addAccountByKey(rawKey, label);
+          // Fire-and-forget so the pool surfaces tier / LS quickly without
+          // blocking the caller on N*network roundtrips.
+          ensureLsForAccount(account.id).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+          probeAccount(account.id).catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+          results.push({
+            success: true,
+            label,
+            email: account.email,
+            method: account.method,
+            apiKey_masked: maskApiKey(account.apiKey),
+            account: { id: account.id, email: account.email, status: account.status },
+          });
+        } catch (err) {
+          results.push({ success: false, label, email: label, error: err.message });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      return json(res, 200, {
+        success: true,
+        total: results.length,
+        successCount,
+        failCount: results.length - successCount,
+        results,
+      });
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
+  }
+
   // ─── OAuth login (Google / GitHub via Firebase) ────────
   // POST /oauth-login — accepts Firebase idToken from client-side OAuth
   if (subpath === '/oauth-login' && method === 'POST') {

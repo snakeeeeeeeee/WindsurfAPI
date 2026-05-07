@@ -3,11 +3,9 @@
     "name": "简体中文",
     "code": "zh-CN"
   },
-
   "brand": {
     "sub": "管理控制台"
   },
-
   "nav": {
     "group": {
       "overview": "概览",
@@ -26,11 +24,9 @@
     "experimental": "实验性功能",
     "credits": "致谢"
   },
-
   "pageTitle": {
     "main": "WindsurfAPI bydwgx1337 控制台"
   },
-
   "page": {
     "overview": "仪表盘",
     "stats": "统计分析",
@@ -43,7 +39,6 @@
     "experimental": "实验性功能",
     "credits": "致谢"
   },
-
   "pageSubtitle": {
     "overview": "系统运行状态与关键指标概览",
     "windsurf-login": "支持 Google / GitHub / 邮箱密码 三种方式登录 Windsurf 获取 API Key",
@@ -56,7 +51,6 @@
     "experimental": "尚未稳定的优化项；如果发现异常可以随时关闭",
     "credits": "感谢以下朋友为项目提交 PR / 审计代码 / 修复问题"
   },
-
   "button": {
     "cancel": "取消",
     "confirm": "确认",
@@ -65,7 +59,6 @@
     "restart": "重启",
     "updateAndRestart": "更新并重启"
   },
-
   "action": {
     "checkUpdate": "检查更新",
     "applyUpdate": "一键更新并重启",
@@ -100,9 +93,12 @@
     "invert": "反选",
     "showPassword": "显示/隐藏密码",
     "revealKey": "点击显示并复制完整 API Key",
-    "importLocal": "从本地 Windsurf 导入"
+    "importLocal": "从本地 Windsurf 导入",
+    "batchDisable": "批量禁用",
+    "batchDelete": "批量删除",
+    "jsonImport": "导入 JSON 账号",
+    "textImport": "导入文本账号"
   },
-
   "status": {
     "active": "正常",
     "disabled": "已禁用",
@@ -146,7 +142,6 @@
     "fetchFailed": "获取失败",
     "clickToEditTier": "点击手动修改层级（探测异常时用）"
   },
-
   "tier": {
     "pro": "PRO",
     "free": "FREE",
@@ -154,7 +149,6 @@
     "unknown": "未知",
     "expiredLabel": "已过期"
   },
-
   "creditsBar": {
     "daily": "每日配额",
     "weekly": "每周配额",
@@ -173,7 +167,6 @@
     "promptNA": "该账号无提示词额度数据",
     "noResetTime": "重置时间未知"
   },
-
   "section": {
     "banStatus": {
       "title": "健康状态"
@@ -312,21 +305,26 @@
     "modelPie": {
       "title": "模型请求量分布",
       "desc": "前 8 个模型的请求量占比"
+    },
+    "jsonImport": {
+      "title": "JSON 文件导入账号",
+      "desc": "上传形如 <code>{\"accounts\":[{\"label\":\"xxx@gmail.com\",\"api_key\":\"devin-session-token$...\"}]}</code> 的 JSON 文件，一次性批量导入已登录的账号。自动识别 Codeium API Key / Windsurf Auth Token。"
+    },
+    "textImport": {
+      "title": "文本文件导入账号（----分隔）",
+      "desc": "上传每行格式为 <code>email----password----devin-session-token$xxx----auth1_xxx</code> 的 .txt 文件，自动按 token 注册 Codeium 并加入账号池。也可直接在下方文本框粘贴。"
     }
   },
-
   "help": {
     "token": "推荐用 Token 方式添加账号 点 {{link}} 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用",
     "tokenGuide": "推荐用 Token 方式添加账号 点 ",
     "tokenGuideEnd": " 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用"
   },
-
   "skin": {
     "modern": "默认现代风",
     "sketch": "手绘草稿风（实验）",
     "hint": "选择后立即写入 cookie 并刷新"
   },
-
   "field": {
     "email": {
       "label": "邮箱",
@@ -413,9 +411,16 @@
       "placeholder": "搜索提供商..."
     },
     "autoScroll": "自动滚动",
-    "autoAdd": "登录成功自动加入账号池"
+    "autoAdd": "登录成功自动加入账号池",
+    "jsonImport": {
+      "parseAs": "解析方式",
+      "file": "JSON 文件"
+    },
+    "textImport": {
+      "file": "文本文件（.txt / .csv）",
+      "paste": "或直接粘贴内容"
+    }
   },
-
   "table": {
     "header": {
       "time": "时间",
@@ -462,7 +467,6 @@
       "credits": "加载中…"
     }
   },
-
   "card": {
     "activeAccounts": {
       "title": "活跃账号",
@@ -541,7 +545,6 @@
     "restarts": "重启",
     "custom": "已自定义"
   },
-
   "login": {
     "title": "控制台登录",
     "subtitle": "请输入管理密码以继续",
@@ -557,7 +560,6 @@
     "locked": "后端未配置密码：请在服务端设置 DASHBOARD_PASSWORD 或 API_KEY 环境变量并重启",
     "networkError": "无法连接服务器"
   },
-
   "range": {
     "6h": "6小时",
     "24h": "24小时",
@@ -573,7 +575,6 @@
     "customCancel": "取消",
     "customHint": "最多显示最近 30 天数据"
   },
-
   "credits": {
     "contributors": "核心贡献者",
     "history": "贡献历史 · {{count}} 项",
@@ -585,7 +586,6 @@
       "pr": "提 PR"
     }
   },
-
   "experimental": {
     "enable": "启用",
     "disable": "禁用",
@@ -614,12 +614,10 @@
     "missingPlaceholderDesc": "保存后该厂商的模型名将无法被替换进提示词。确定继续？",
     "restored": "已恢复"
   },
-
   "drought": {
     "title": "配额预警：",
     "body": "所有账号本周配额都低于阈值，建议补账号或等待重置"
   },
-
   "credentials": {
     "apiKey": "API_KEY",
     "dashboardPassword": "Dashboard 密码",
@@ -636,7 +634,6 @@
     "confirmSave": "改完之后旧值立即失效，要继续吗？",
     "confirmClear": "清除运行时覆盖，回退 .env 值？"
   },
-
   "confirm": {
     "restartTitle": "重启 Language Server",
     "restartDesc": "进行中的请求将会失败，确定要继续吗？",
@@ -646,7 +643,6 @@
     "restoreDefaultDesc": "恢复到默认？",
     "clearPoolDesc": "当前所有进行中的 Cascade 会话都将被清除，确定继续吗？"
   },
-
   "modal": {
     "blockedModels": {
       "title": "编辑可用模型 — {{email}}",
@@ -689,9 +685,16 @@
     "configureProxy": {
       "title": "配置账号代理",
       "desc": "为账号 {{label}} 设置独立代理"
+    },
+    "batchDisable": {
+      "title": "批量禁用账号",
+      "desc": "确定要禁用选中的 {{n}} 个账号吗？"
+    },
+    "batchDelete": {
+      "title": "批量删除账号",
+      "desc": "确定要删除选中的 {{n}} 个账号吗？此操作不可撤销。"
     }
   },
-
   "oauth": {
     "tryAnotherWay": "换个方式试试",
     "google": "Google 登录",
@@ -714,7 +717,6 @@
       "loginFailed": "{{label}} 登录失败: {{error}}"
     }
   },
-
   "update": {
     "checking": "正在检查更新...",
     "newVersion": "发现新版本",
@@ -729,7 +731,6 @@
     "notGitDesc": "如果你用 git clone 部署的 需要确保 .git 目录和 WindsurfAPI 源代码目录在一起。SFTP / 压缩包上传的部署请手动替换文件后 pm2 重启",
     "upToDate": "已是最新，无需更新"
   },
-
   "proxy": {
     "test": {
       "button": "测试代理",
@@ -744,7 +745,6 @@
     "placeholderPassword": "代理认证密码",
     "auth": "认证"
   },
-
   "localImport": {
     "scanning": "正在扫描本地 Windsurf 客户端…",
     "empty": "没找到已登录的本地 Windsurf 凭证",
@@ -758,7 +758,6 @@
     "importSuccess": "已导入 {{email}}",
     "unavailable": "此功能仅在 localhost 部署可用 — 远端服务器上的 \"本地 Windsurf\" 是别人电脑上的，不是你电脑里的。"
   },
-
   "account": {
     "addSuccess": "账号已添加",
     "deleteSuccess": "账号已删除",
@@ -829,7 +828,6 @@
       }
     }
   },
-
   "batch": {
     "pasteFirst": "请先粘贴批量账号",
     "importing": "导入中...",
@@ -839,9 +837,18 @@
     "importComplete": "批量导入完成：成功 {{success}} / 失败 {{fail}}",
     "success": "成功",
     "fail": "失败",
-    "formatError": "第 {{line}} 行格式错误"
+    "formatError": "第 {{line}} 行格式错误",
+    "notSelected": "未选择账号",
+    "selectedCount": "已选 {{n}} 个",
+    "disable": {
+      "success": "已禁用 {{n}} 个账号",
+      "partial": "成功 {{ok}}，失败 {{fail}}"
+    },
+    "delete": {
+      "success": "已删除 {{n}} 个账号",
+      "partial": "成功 {{ok}}，失败 {{fail}}"
+    }
   },
-
   "quietWindow": {
     "status": {
       "disabled": "已关闭",
@@ -856,7 +863,6 @@
     "triggered": "已触发",
     "triggerFailed": "触发失败"
   },
-
   "toast": {
     "copied": "已复制",
     "saved": "已保存",
@@ -917,7 +923,6 @@
       "allRefreshed": "余额刷新完成：{{ok}} 成功 / {{fail}} 失败"
     }
   },
-
   "log": {
     "level": {
       "all": "所有级别",
@@ -937,7 +942,6 @@
       "btn": "下载日志"
     }
   },
-
   "model": {
     "mode": {
       "all": "全部允许",
@@ -960,7 +964,6 @@
       "empty": "清单为空"
     }
   },
-
   "error": {
     "generic": "发生错误",
     "unknown": "未知错误",
@@ -1016,18 +1019,15 @@
     "ERR_LOCAL_IMPORT_LOOPBACK_ONLY": "本地导入仅限 127.0.0.1 访问 — 请在部署服务器本机的浏览器里打开 dashboard，不要用公网域名",
     "ERR_LOCAL_IMPORT_FAILED": "扫描本地 Windsurf 凭证失败"
   },
-
   "footer": {
     "version": "版本",
     "langToggle": "切换语言",
     "langToggleToEn": "Switch to English",
     "langToggleToZh": "切换到中文"
   },
-
   "placeholder": {
     "noProxy": "无代理"
   },
-
   "loginResult": {
     "success": "✓ 登录成功",
     "apiKeyGenerated": "API Key 已生成{{autoAdd}}",
@@ -1045,20 +1045,17 @@
     "successTitle": "登录成功",
     "addedToPool": "并加入账号池"
   },
-
   "timeRange": {
     "minutesAgo": "{{count}}分钟前",
     "hoursAgo": "{{count}}小时前",
     "daysAgo": "{{count}}天前"
   },
-
   "time": {
     "day": "天",
     "hour": "时",
     "minute": "分",
     "second": "秒"
   },
-
   "prompt": {
     "editor": {
       "reset": "重置",
@@ -1066,12 +1063,25 @@
       "templateHint": "{{model}} 占位符会被替换成请求的模型名。"
     }
   },
-
   "ls": {
     "defaultInstance": "默认实例",
     "noProxy": "无代理",
     "port": "端口",
     "pid": "PID",
     "restartCount": "重启次数"
+  },
+  "jsonImport": {
+    "invalidShape": "JSON 结构不支持：需要 {accounts:[...]} 或顶层数组",
+    "parsed": "已解析 {{ok}} / {{total}} 条",
+    "skipped": "{{n}} 条因缺少 api_key/token 跳过",
+    "parseError": "JSON 解析失败",
+    "empty": "没有可导入的账号"
+  },
+  "textImport": {
+    "readError": "读取文本文件失败",
+    "parsed": "已解析 {{ok}} / {{total}} 行",
+    "formatErrors": "{{n}} 行格式错误",
+    "formatErrorLines": "格式错误行：{{lines}}",
+    "empty": "没有可导入的账号"
   }
 }

@@ -250,6 +250,26 @@ code {
 .section-body { padding: 20px; }
 .section-body.tight { padding: 0; }
 
+/* Batch toolbar (sits on the right side of section-header) */
+.batch-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.batch-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-right: 4px;
+}
+.batch-count.has-selection { color: var(--accent); font-weight: 600; }
+
+/* Selection column — keep narrow so the table layout doesn't shift */
+#accounts-table th.th-select,
+#accounts-table td.td-select { width: 32px; padding-left: 12px; padding-right: 4px; text-align: center; }
+#accounts-table input[type="checkbox"].acct-select,
+#accounts-table #accounts-select-all { cursor: pointer; }
+
 /* ─── Buttons ─────────────────────────────────── */
 .btn {
   display: inline-flex;
@@ -1687,6 +1707,88 @@ window._firebaseOAuth = async function(provider) {
       </div>
     </div>
 
+    <!-- JSON Import (v2.0.90+): 批量导入 {accounts:[{label, api_key}]} 格式的 JSON 文件。
+         api_key 字段支持两种值：Codeium API Key 或 Windsurf Auth Token
+         （形如 devin-session-token$eyJ...）。导入时自动识别。 -->
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.jsonImport.title">JSON 文件导入账号</div>
+          <div class="section-desc" data-i18n="section.jsonImport.desc">上传形如 <code>{"accounts":[{"label":"xxx@gmail.com","api_key":"devin-session-token$..."}]}</code> 的 JSON 文件，一次性批量导入已登录的账号。自动识别 Codeium API Key / Windsurf Auth Token。</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="field-row">
+          <div class="field" style="max-width:200px">
+            <label class="field-label" data-i18n="field.jsonImport.parseAs">解析方式</label>
+            <select id="wl-json-parse-as" class="select">
+              <option value="auto" selected>自动识别</option>
+              <option value="token">强制 Auth Token</option>
+              <option value="api_key">强制 API Key</option>
+            </select>
+          </div>
+          <div class="field" style="flex:2">
+            <label class="field-label" data-i18n="field.jsonImport.file">JSON 文件</label>
+            <input id="wl-json-file" class="input" type="file" accept=".json,application/json" onchange="App.previewJsonImport()">
+          </div>
+        </div>
+        <div id="wl-json-preview" class="field-hint" style="margin-top:6px;color:var(--text-muted)"></div>
+        <div class="field-row-actions" style="margin-top:12px">
+          <button class="btn btn-outline" onclick="document.getElementById('wl-json-file').value='';App.previewJsonImport();">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            <span data-i18n="action.clear">清空</span>
+          </button>
+          <button class="btn btn-primary" onclick="App.jsonImportAccounts()" id="wl-json-import-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span data-i18n="action.jsonImport">导入 JSON 账号</span>
+          </button>
+        </div>
+        <div id="wl-json-result" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- Text Import (v2.0.91+): 批量导入 "email----password----token----auth1" 行格式的 .txt 文件。
+         每行 4 段，用 "----" 分隔。token 字段自动识别 devin-session-token$ / API Key。
+         password 与 auth1 仅留作日志/调试，实际入库走 token 字段。 -->
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.textImport.title">文本文件导入账号（----分隔）</div>
+          <div class="section-desc" data-i18n="section.textImport.desc">上传每行格式为 <code>email----password----devin-session-token$xxx----auth1_xxx</code> 的 .txt 文件，自动按 token 注册 Codeium 并加入账号池。也可直接在下方文本框粘贴。</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="field-row">
+          <div class="field" style="flex:2">
+            <label class="field-label" data-i18n="field.textImport.file">文本文件（.txt / .csv）</label>
+            <input id="wl-text-file" class="input" type="file" accept=".txt,.csv,.log,text/plain" onchange="App.previewTextImport()">
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <label class="field-label" data-i18n="field.textImport.paste">或直接粘贴内容</label>
+          <textarea
+            id="wl-text-input"
+            class="textarea"
+            rows="5"
+            placeholder="user1@mail.com----Windsurf@2025----devin-session-token$eyJhbGc...----auth1_xxxxxxxxxxxx&#10;user2@mail.com----Windsurf@2025----devin-session-token$eyJhbGc...----auth1_xxxxxxxxxxxx"
+            oninput="App.previewTextImport(true)"
+          ></textarea>
+        </div>
+        <div id="wl-text-preview" class="field-hint" style="margin-top:6px;color:var(--text-muted)"></div>
+        <div class="field-row-actions" style="margin-top:12px">
+          <button class="btn btn-outline" onclick="document.getElementById('wl-text-file').value='';document.getElementById('wl-text-input').value='';App.previewTextImport();">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            <span data-i18n="action.clear">清空</span>
+          </button>
+          <button class="btn btn-primary" onclick="App.textImportAccounts()" id="wl-text-import-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span data-i18n="action.textImport">导入文本账号</span>
+          </button>
+        </div>
+        <div id="wl-text-result" style="margin-top:12px"></div>
+      </div>
+    </div>
+
     <div class="section hidden" id="wl-result"></div>
 
     <div class="section">
@@ -1831,11 +1933,16 @@ window._firebaseOAuth = async function(provider) {
           <div class="section-title" data-i18n="section.accountList.title">账号列表</div>
           <div class="section-desc" data-i18n="section.accountList.desc">点击探测按钮可单独更新某个账号的能力信息</div>
         </div>
+        <div id="accounts-batch-toolbar" class="batch-toolbar">
+          <span id="accounts-batch-count" class="batch-count text-xs text-muted" data-i18n="batch.notSelected">未选择账号</span>
+          <button id="accounts-batch-disable" class="btn btn-outline btn-sm" disabled onclick="App.batchDisableAccounts()" data-i18n="action.batchDisable">批量禁用</button>
+          <button id="accounts-batch-delete" class="btn btn-danger btn-sm" disabled onclick="App.batchDeleteAccounts()" data-i18n="action.batchDelete">批量删除</button>
+        </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="accounts-table">
-            <thead><tr><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th class="th-help" data-i18n="table.header.credits" data-i18n-title="creditsBar.columnTooltip" title="配额使用情况&#10;&#10;日 — 每日高级请求剩余百分比（重置频繁）&#10;周 — 每周高级请求剩余百分比（Trial 账号重点看这条）&#10;&#10;数值越高 = 剩余越多 = 越安全&#10;悬停单条进度条可查看重置时间">余额</th><th data-i18n="table.header.models">可用模型</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
+            <thead><tr><th class="th-select"><input type="checkbox" id="accounts-select-all" onchange="App.toggleAllAccountsSelection(this.checked)" title="全选/取消全选"></th><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th class="th-help" data-i18n="table.header.credits" data-i18n-title="creditsBar.columnTooltip" title="配额使用情况&#10;&#10;日 — 每日高级请求剩余百分比（重置频繁）&#10;周 — 每周高级请求剩余百分比（Trial 账号重点看这条）&#10;&#10;数值越高 = 剩余越多 = 越安全&#10;悬停单条进度条可查看重置时间">余额</th><th data-i18n="table.header.models">可用模型</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -3376,6 +3483,241 @@ docker compose up -d --force-recreate</pre>
     }
   },
 
+  // ─── JSON / Text bulk-import handlers (v2.0.90+) ──────────────
+  // Both flows POST to /import-accounts which already handles auto-detection
+  // between Codeium api_key and Windsurf devin-session-token$/JWT inputs.
+  // The frontend's only jobs are: (1) parse the chosen source, (2) surface a
+  // pre-flight summary so operators see how many lines look valid before they
+  // commit, (3) display per-account result rows after the round-trip.
+
+  // Parse JSON file → cache entries on this._jsonImportEntries. Accepts both
+  // {"accounts":[...]} and a bare array; keeps any item that has api_key OR
+  // token (the legacy field name some exporters use).
+  async previewJsonImport() {
+    const fileEl = document.getElementById('wl-json-file');
+    const previewEl = document.getElementById('wl-json-preview');
+    this._jsonImportEntries = null;
+    if (!previewEl) return;
+    if (!fileEl?.files?.[0]) { previewEl.innerHTML = ''; return; }
+    const file = fileEl.files[0];
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const list = Array.isArray(data)
+        ? data
+        : (Array.isArray(data?.accounts) ? data.accounts : null);
+      if (!list) {
+        previewEl.innerHTML = `<span style="color:var(--error)">${this.esc(I18n.t('jsonImport.invalidShape'))}</span>`;
+        return;
+      }
+      const entries = [];
+      let skipped = 0;
+      list.forEach(it => {
+        const key = String(it?.api_key || it?.token || '').trim();
+        const label = String(it?.label || it?.email || it?.name || '').trim();
+        if (!key) { skipped++; return; }
+        entries.push({ label, api_key: key });
+      });
+      this._jsonImportEntries = entries;
+      const summary = `📄 <code>${this.esc(file.name)}</code> · ${this.esc(I18n.t('jsonImport.parsed', { ok: entries.length, total: list.length }))}`;
+      const skipNote = skipped
+        ? ` · <span style="color:var(--warning, #f59e0b)">${this.esc(I18n.t('jsonImport.skipped', { n: skipped }))}</span>`
+        : '';
+      previewEl.innerHTML = summary + skipNote;
+    } catch (err) {
+      previewEl.innerHTML = `<span style="color:var(--error)">${this.esc(I18n.t('jsonImport.parseError'))}: ${this.esc(err.message)}</span>`;
+    }
+  },
+
+  async jsonImportAccounts() {
+    const fileEl = document.getElementById('wl-json-file');
+    const parseAs = document.getElementById('wl-json-parse-as')?.value || 'auto';
+    const resultEl = document.getElementById('wl-json-result');
+    const btn = document.getElementById('wl-json-import-btn');
+    // Re-parse the file each time we submit so a stale cache (e.g. user picked
+    // a new file but didn't trigger onchange somehow) cannot leak old data.
+    if (fileEl?.files?.[0]) await this.previewJsonImport();
+    const entries = this._jsonImportEntries || [];
+    if (!entries.length) return this.toast(I18n.t('jsonImport.empty'), 'error');
+    if (btn) {
+      btn.dataset._origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> ' + I18n.t('batch.importing');
+    }
+    if (resultEl) resultEl.innerHTML = `<div class="text-sm text-muted">${this.esc(I18n.t('batch.importingDesc', { count: entries.length }))}</div>`;
+    try {
+      const r = await this.api('POST', '/import-accounts', { accounts: entries, parseAs });
+      if (!r.success || !Array.isArray(r.results)) {
+        const errKey = r.error ? `error.${r.error}` : null;
+        const msg = (errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('error.unknown'));
+        if (resultEl) resultEl.innerHTML = `<div style="color:var(--error)" class="text-sm">${this.esc(msg)}</div>`;
+        return this.toast(msg, 'error');
+      }
+      this._renderImportResultTable(resultEl, r.results);
+      this.toast(I18n.t('batch.importComplete', { success: r.successCount || 0, fail: r.failCount || 0 }), (r.failCount || 0) ? 'info' : 'success');
+      this.pushLoginHistoryEntries(r.results.map(item => ({
+        time: new Date().toISOString(),
+        email: item.email || item.label || '-',
+        proxy: '-',
+        status: item.success ? 'success' : `error: ${item.error || 'unknown'}`,
+        apiKey: item.success ? (item.apiKey_masked || (item.apiKey ? item.apiKey.slice(0, 16) + '...' : undefined)) : undefined,
+      })));
+      if ((r.successCount || 0) > 0) {
+        this.loadAccounts();
+        this._jsonImportEntries = null;
+        if (fileEl) fileEl.value = '';
+        this.previewJsonImport();
+      }
+    } catch (err) {
+      if (resultEl) resultEl.innerHTML = `<div style="color:var(--error)" class="text-sm">${this.esc(err.message)}</div>`;
+      this.toast(err.message, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        if (btn.dataset._origHtml) btn.innerHTML = btn.dataset._origHtml;
+      }
+    }
+  },
+
+  // Parse a single "email----password----token----auth1" line. We accept the
+  // 3-segment short form (drop trailing auth1) for operators whose source
+  // export omits it, but require email + token at minimum.
+  _parseTextImportLines(text) {
+    const entries = [];
+    const errors = [];
+    String(text || '').replace(/\r\n?/g, '\n').split('\n').forEach((raw, idx) => {
+      const line = raw.trim();
+      if (!line) return;
+      const parts = line.split('----').map(p => p.trim());
+      if (parts.length < 3) { errors.push(idx + 1); return; }
+      const [email, password, token, auth1] = parts;
+      if (!email || !token || !email.includes('@')) { errors.push(idx + 1); return; }
+      entries.push({
+        label: email,
+        api_key: token,
+        password: password || undefined,
+        auth1: auth1 || undefined,
+      });
+    });
+    return { entries, errors };
+  },
+
+  // fromTextarea=true means we only re-parse the textarea (oninput path) and
+  // must NOT clobber it with file contents. The file→textarea pipe runs only
+  // when the file <input> changes and the textarea is the source of truth
+  // afterwards (so operators can hand-edit before committing).
+  async previewTextImport(fromTextarea = false) {
+    const fileEl = document.getElementById('wl-text-file');
+    const ta = document.getElementById('wl-text-input');
+    const previewEl = document.getElementById('wl-text-preview');
+    this._textImportEntries = null;
+    if (!previewEl || !ta) return;
+    if (!fromTextarea && fileEl?.files?.[0]) {
+      try {
+        ta.value = await fileEl.files[0].text();
+      } catch (err) {
+        previewEl.innerHTML = `<span style="color:var(--error)">${this.esc(I18n.t('textImport.readError'))}: ${this.esc(err.message)}</span>`;
+        return;
+      }
+    }
+    const raw = ta.value || '';
+    if (!raw.trim()) { previewEl.innerHTML = ''; return; }
+    const { entries, errors } = this._parseTextImportLines(raw);
+    this._textImportEntries = entries;
+    const total = entries.length + errors.length;
+    const summary = `📋 ${this.esc(I18n.t('textImport.parsed', { ok: entries.length, total }))}`;
+    const errNote = errors.length
+      ? ` · <span style="color:var(--warning, #f59e0b)" title="${this.esc(I18n.t('textImport.formatErrorLines', { lines: errors.join(', ') }))}">${this.esc(I18n.t('textImport.formatErrors', { n: errors.length }))}</span>`
+      : '';
+    previewEl.innerHTML = summary + errNote;
+  },
+
+  async textImportAccounts() {
+    const ta = document.getElementById('wl-text-input');
+    const resultEl = document.getElementById('wl-text-result');
+    const btn = document.getElementById('wl-text-import-btn');
+    if (!ta?.value?.trim()) return this.toast(I18n.t('textImport.empty'), 'error');
+    const { entries, errors } = this._parseTextImportLines(ta.value);
+    if (!entries.length) return this.toast(I18n.t('textImport.empty'), 'error');
+    if (btn) {
+      btn.dataset._origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> ' + I18n.t('batch.importing');
+    }
+    if (resultEl) {
+      const errNote = errors.length
+        ? ` · <span style="color:var(--warning, #f59e0b)">${this.esc(I18n.t('textImport.formatErrors', { n: errors.length }))}</span>`
+        : '';
+      resultEl.innerHTML = `<div class="text-sm text-muted">${this.esc(I18n.t('batch.importingDesc', { count: entries.length }))}${errNote}</div>`;
+    }
+    try {
+      const r = await this.api('POST', '/import-accounts', { accounts: entries, parseAs: 'auto' });
+      if (!r.success || !Array.isArray(r.results)) {
+        const errKey = r.error ? `error.${r.error}` : null;
+        const msg = (errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('error.unknown'));
+        if (resultEl) resultEl.innerHTML = `<div style="color:var(--error)" class="text-sm">${this.esc(msg)}</div>`;
+        return this.toast(msg, 'error');
+      }
+      this._renderImportResultTable(resultEl, r.results);
+      this.toast(I18n.t('batch.importComplete', { success: r.successCount || 0, fail: r.failCount || 0 }), (r.failCount || 0) ? 'info' : 'success');
+      this.pushLoginHistoryEntries(r.results.map(item => ({
+        time: new Date().toISOString(),
+        email: item.email || item.label || '-',
+        proxy: '-',
+        status: item.success ? 'success' : `error: ${item.error || 'unknown'}`,
+        apiKey: item.success ? (item.apiKey_masked || (item.apiKey ? item.apiKey.slice(0, 16) + '...' : undefined)) : undefined,
+      })));
+      if ((r.successCount || 0) > 0) {
+        this.loadAccounts();
+        ta.value = '';
+        const fileEl = document.getElementById('wl-text-file');
+        if (fileEl) fileEl.value = '';
+        this._textImportEntries = null;
+        this.previewTextImport(true);
+      }
+    } catch (err) {
+      if (resultEl) resultEl.innerHTML = `<div style="color:var(--error)" class="text-sm">${this.esc(err.message)}</div>`;
+      this.toast(err.message, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        if (btn.dataset._origHtml) btn.innerHTML = btn.dataset._origHtml;
+      }
+    }
+  },
+
+  // Shared result table for both JSON and text import paths — keeps the look
+  // identical to renderBatchWindsurfLoginResult but renders into a caller-
+  // supplied container so each section retains its own scoped output.
+  _renderImportResultTable(el, results) {
+    if (!el) return;
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.length - successCount;
+    el.innerHTML = `
+      <div class="section-header" style="padding:0;margin-bottom:8px">
+        <div>
+          <div class="section-title" style="color:${failCount ? 'var(--warning, #f59e0b)' : 'var(--success)'};font-size:14px">
+            ${this.esc(I18n.t('batch.importComplete', { success: successCount, fail: failCount }))}
+          </div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>${I18n.t('table.header.email')}</th><th>${I18n.t('table.header.status')}</th><th>${I18n.t('table.header.note')}</th></tr></thead>
+          <tbody>
+            ${results.map(r => `
+              <tr>
+                <td>${this.esc(r.email || r.label || '-')}</td>
+                <td><span class="badge ${r.success ? 'active' : 'error'}">${r.success ? I18n.t('batch.success') : I18n.t('batch.fail')}</span></td>
+                <td class="text-sm">${r.success
+                  ? `<span class="break-all"><code>${this.esc(r.apiKey_masked || (r.apiKey ? r.apiKey.slice(0, 16) + '...' : '-'))}</code>${r.account ? ` · ${this.esc(r.account.id)}` : ''}</span>`
+                  : (() => { const errKey = r.error ? `error.${r.error}` : null; return `<span style="color:var(--error)">${this.esc((errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('error.unknown')))}</span>`; })()}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  },
+
   renderLoginHistory() {
     const tbody = document.querySelector('#wl-history-table tbody');
     if (!tbody) return;
@@ -3548,8 +3890,12 @@ docker compose up -d --force-recreate</pre>
           </div>`;
       }
       const isExpanded = this._expandedAccounts?.has(a.id);
+      const isSelected = this._selectedAccounts?.has(a.id);
       return `
-      <tr${isExpanded ? ' class="expanded"' : ''}>
+      <tr${isExpanded ? ' class="expanded"' : ''}${isSelected ? ' data-selected="1"' : ''}>
+        <td class="td-select">
+          <input type="checkbox" class="acct-select" data-account-id="${this.escJsAttr(a.id)}" ${isSelected ? 'checked' : ''} onchange="App.toggleAccountSelection('${this.escJsAttr(a.id)}', this.checked)">
+        </td>
         <td>
           <button class="expand-chevron ${isExpanded ? 'open' : ''}" onclick="App.toggleAccountDetail('${this.escJsAttr(a.id)}')" title="${I18n.t('account.detail.toggle')}">▸</button>
           <code>${a.id}</code>
@@ -3581,11 +3927,23 @@ docker compose up -d --force-recreate</pre>
             <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${this.escJsAttr(a.id)}')">${I18n.t('action.delete')}</button>
           </div>
         </td>
-      </tr>${isExpanded ? `<tr class="account-detail-row"><td colspan="11">${this.renderAccountDetail(a)}</td></tr>` : ''}`;
-    }).join('') || `<tr class="empty-row"><td colspan="11">${I18n.t('table.empty.accounts')}</td></tr>`;
+      </tr>${isExpanded ? `<tr class="account-detail-row"><td colspan="12">${this.renderAccountDetail(a)}</td></tr>` : ''}`;
+    }).join('') || `<tr class="empty-row"><td colspan="12">${I18n.t('table.empty.accounts')}</td></tr>`;
+    // Reconcile selection set against current account list — drop ids that
+    // no longer exist so stale selections don't leak across reloads.
+    if (this._selectedAccounts && this._selectedAccounts.size > 0) {
+      const visibleIds = new Set((d.accounts || []).map(a => a.id));
+      let dirty = false;
+      for (const id of Array.from(this._selectedAccounts)) {
+        if (!visibleIds.has(id)) { this._selectedAccounts.delete(id); dirty = true; }
+      }
+      if (dirty) this._refreshBatchToolbar();
+    }
+    this._refreshBatchToolbar();
   },
 
   _expandedAccounts: new Set(),
+  _selectedAccounts: new Set(),
   _modelsCatalog: null,
 
   async _ensureModelsCatalog() {
@@ -4115,6 +4473,107 @@ docker compose up -d --force-recreate</pre>
     await this.api('DELETE', `/accounts/${id}`);
     this.loadAccounts();
     this.toast(I18n.t('account.deleteSuccess'));
+  },
+
+  // ─── Batch account operations ────────────────
+  // Selection state lives in App._selectedAccounts (initialized above near
+  // _expandedAccounts). renderAccounts() reconciles this set against the
+  // currently-rendered account list, so stale ids cannot leak across reloads.
+  toggleAccountSelection(id, checked) {
+    if (!this._selectedAccounts) this._selectedAccounts = new Set();
+    if (checked) this._selectedAccounts.add(id); else this._selectedAccounts.delete(id);
+    // Keep the row's data-selected attribute in sync so styling (if any) and
+    // the select-all tri-state both reflect reality without a full re-render.
+    const row = document.querySelector(`#accounts-table input.acct-select[data-account-id="${CSS.escape(id)}"]`)?.closest('tr');
+    if (row) { if (checked) row.setAttribute('data-selected', '1'); else row.removeAttribute('data-selected'); }
+    this._refreshBatchToolbar();
+  },
+
+  toggleAllAccountsSelection(checked) {
+    if (!this._selectedAccounts) this._selectedAccounts = new Set();
+    const boxes = document.querySelectorAll('#accounts-table input.acct-select');
+    boxes.forEach(cb => {
+      cb.checked = checked;
+      const id = cb.getAttribute('data-account-id');
+      if (!id) return;
+      if (checked) this._selectedAccounts.add(id); else this._selectedAccounts.delete(id);
+      const row = cb.closest('tr');
+      if (row) { if (checked) row.setAttribute('data-selected', '1'); else row.removeAttribute('data-selected'); }
+    });
+    this._refreshBatchToolbar();
+  },
+
+  _refreshBatchToolbar() {
+    const count = this._selectedAccounts ? this._selectedAccounts.size : 0;
+    const countEl = document.getElementById('accounts-batch-count');
+    const disableBtn = document.getElementById('accounts-batch-disable');
+    const deleteBtn = document.getElementById('accounts-batch-delete');
+    const selectAll = document.getElementById('accounts-select-all');
+    if (countEl) {
+      if (count > 0) {
+        countEl.textContent = I18n.t('batch.selectedCount', { n: count }) || `已选 ${count} 个`;
+        countEl.classList.add('has-selection');
+      } else {
+        countEl.textContent = I18n.t('batch.notSelected') || '未选择账号';
+        countEl.classList.remove('has-selection');
+      }
+    }
+    if (disableBtn) disableBtn.disabled = count === 0;
+    if (deleteBtn) deleteBtn.disabled = count === 0;
+    // Tri-state for the header checkbox: all / none / partial
+    if (selectAll) {
+      const total = document.querySelectorAll('#accounts-table input.acct-select').length;
+      selectAll.checked = total > 0 && count === total;
+      selectAll.indeterminate = count > 0 && count < total;
+    }
+  },
+
+  async batchDisableAccounts() {
+    const ids = Array.from(this._selectedAccounts || []);
+    if (ids.length === 0) return;
+    const ok = await this.confirm(
+      I18n.t('modal.batchDisable.title') || '批量禁用账号',
+      (I18n.t('modal.batchDisable.desc', { n: ids.length }) || `确定要禁用选中的 ${ids.length} 个账号吗？`),
+      { okText: I18n.t('action.disable') || '禁用' }
+    );
+    if (!ok) return;
+    let okCount = 0, failCount = 0;
+    for (const id of ids) {
+      try { await this.api('PATCH', `/accounts/${id}`, { status: 'disabled' }); okCount++; }
+      catch { failCount++; }
+    }
+    this._selectedAccounts.clear();
+    await this.loadAccounts();
+    this.toast(
+      failCount === 0
+        ? (I18n.t('batch.disable.success', { n: okCount }) || `已禁用 ${okCount} 个账号`)
+        : (I18n.t('batch.disable.partial', { ok: okCount, fail: failCount }) || `成功 ${okCount}，失败 ${failCount}`),
+      failCount === 0 ? 'success' : 'warn'
+    );
+  },
+
+  async batchDeleteAccounts() {
+    const ids = Array.from(this._selectedAccounts || []);
+    if (ids.length === 0) return;
+    const ok = await this.confirm(
+      I18n.t('modal.batchDelete.title') || '批量删除账号',
+      (I18n.t('modal.batchDelete.desc', { n: ids.length }) || `确定要删除选中的 ${ids.length} 个账号吗？此操作不可撤销。`),
+      { danger: true, okText: I18n.t('action.delete') || '删除' }
+    );
+    if (!ok) return;
+    let okCount = 0, failCount = 0;
+    for (const id of ids) {
+      try { await this.api('DELETE', `/accounts/${id}`); okCount++; }
+      catch { failCount++; }
+    }
+    this._selectedAccounts.clear();
+    await this.loadAccounts();
+    this.toast(
+      failCount === 0
+        ? (I18n.t('batch.delete.success', { n: okCount }) || `已删除 ${okCount} 个账号`)
+        : (I18n.t('batch.delete.partial', { ok: okCount, fail: failCount }) || `成功 ${okCount}，失败 ${failCount}`),
+      failCount === 0 ? 'success' : 'warn'
+    );
   },
 
   // ─── Models ──────────────────────────────────
