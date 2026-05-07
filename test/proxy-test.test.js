@@ -87,6 +87,35 @@ describe('HTTP CONNECT proxy tunnel', () => {
     }
   });
 
+  it('finishes HTTP verification when Content-Length is complete even if proxy keeps connection open', async () => {
+    const originalAllowPrivate = config.allowPrivateProxyHosts;
+    config.allowPrivateProxyHosts = true;
+    const body = '{"ip":"198.51.100.22","country":"US","region":"Texas","city":"Decatur","org":"AS35986"}';
+    const server = net.createServer((socket) => {
+      socket.once('data', () => {
+        socket.write([
+          'HTTP/1.1 200 OK',
+          'Content-Type: application/json',
+          `Content-Length: ${Buffer.byteLength(body)}`,
+          '',
+          body,
+        ].join('\r\n'));
+      });
+    });
+    const port = await listen(server);
+    try {
+      const result = await testProxy(
+        { host: '127.0.0.1', port, username: 'user', password: 'pass' },
+        { verifyUrl: 'http://ipinfo.test/json', timeoutMs: 1000 }
+      );
+      assert.equal(result.egressIp, '198.51.100.22');
+      assert.equal(result.city, 'Decatur');
+    } finally {
+      config.allowPrivateProxyHosts = originalAllowPrivate;
+      await close(server);
+    }
+  });
+
   it('includes HTTP verification response body in error messages', async () => {
     const originalAllowPrivate = config.allowPrivateProxyHosts;
     config.allowPrivateProxyHosts = true;

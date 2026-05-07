@@ -115,7 +115,27 @@ function requestViaHttpProxy(proxy, targetUrl, timeoutMs) {
       socket.destroy();
       err ? reject(err) : resolve(value);
     };
-    socket.on('data', c => buf = Buffer.concat([buf, c]));
+    const maybeDone = () => {
+      const raw = buf.toString('latin1');
+      let headerEnd = raw.indexOf('\r\n\r\n');
+      let separatorLength = 4;
+      if (headerEnd < 0) {
+        headerEnd = raw.indexOf('\n\n');
+        separatorLength = 2;
+      }
+      if (headerEnd < 0) return;
+      const head = raw.slice(0, headerEnd);
+      const contentLength = Number((head.match(/^content-length:\s*(\d+)/im) || [])[1] || -1);
+      if (contentLength < 0) return;
+      const bodyStart = headerEnd + separatorLength;
+      if (buf.length >= bodyStart + contentLength) {
+        done(null, buf.subarray(0, bodyStart + contentLength).toString('utf8'));
+      }
+    };
+    socket.on('data', c => {
+      buf = Buffer.concat([buf, c]);
+      maybeDone();
+    });
     socket.on('end', () => done(null, buf.toString('utf8')));
     socket.on('error', err => done(new Error(`ERR_CONNECTION_FAILED:${err.message}`)));
     socket.setTimeout(timeoutMs, () => done(new Error('ERR_TIMEOUT')));
