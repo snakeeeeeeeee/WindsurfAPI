@@ -665,6 +665,7 @@
   },
   "runtimeEnv": {
     "save": "保存配置",
+    "restartService": "重启服务",
     "saved": "运行时环境配置已保存",
     "defaultValue": "默认",
     "defaultUpstream": "默认 upstream",
@@ -692,6 +693,8 @@
   "confirm": {
     "restartTitle": "重启 Language Server",
     "restartDesc": "进行中的请求将会失败，确定要继续吗？",
+    "restartServiceTitle": "重启服务",
+    "restartServiceDesc": "API 进程会退出，并由 Docker 或进程守护重新拉起。Dashboard 会短暂不可用，确定继续吗？",
     "updateLsTitle": "更新 LS Binary",
     "updateLsDesc": "从 WindsurfAPI / Exafunction GitHub release 下载最新 language_server 并重启 LS 池。期间正在进行的请求会失败一次。",
     "updateLsButton": "更新",
@@ -945,6 +948,7 @@
     "copyFailedError": "复制失败：{{error}}",
     "enterEmailPassword": "请输入邮箱和密码",
     "restarting": "Language Server 重启中...",
+    "serviceRestarting": "服务正在重启，稍后自动刷新页面...",
     "lsBinaryUpdating": "LS 更新中…",
     "lsBinaryUpdated": "LS 二进制已更新（{{before}} → {{after}}），重启 {{count}} 个实例",
     "lsBinaryUpdatedColdPool": "LS 二进制已更新（{{before}} → {{after}}），暂无运行中实例，下次请求时自动加载",

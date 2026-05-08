@@ -2541,6 +2541,7 @@ window._firebaseOAuth = async function(provider) {
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" onclick="App.loadRuntimeEnv()" data-i18n="action.refresh">刷新</button>
           <button class="btn btn-primary btn-sm" onclick="App.saveRuntimeEnv()" data-i18n="runtimeEnv.save">保存配置</button>
+          <button class="btn btn-outline btn-sm" onclick="App.restartService()" data-i18n="runtimeEnv.restartService">重启服务</button>
         </div>
       </div>
       <div class="section-body" style="display:grid;gap:14px">
@@ -6458,6 +6459,22 @@ docker compose up -d --force-recreate</pre>
       this.loadRuntimeEnv();
     } else {
       this.toast(r.error || 'Save failed', 'error');
+    }
+  },
+
+  async restartService() {
+    const ok = await this.confirm(
+      I18n.t('confirm.restartServiceTitle'),
+      I18n.t('confirm.restartServiceDesc'),
+      { danger: true, okText: I18n.t('runtimeEnv.restartService') },
+    );
+    if (!ok) return;
+    const r = await this.api('POST', '/service/restart', { confirm: true });
+    if (r.success) {
+      this.toast(I18n.t('toast.serviceRestarting'), 'info');
+      setTimeout(() => location.reload(), 9000);
+    } else {
+      this.toast(r.error || 'Restart failed', 'error');
     }
   },
 

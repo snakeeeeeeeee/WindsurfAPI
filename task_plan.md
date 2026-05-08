@@ -46,3 +46,4 @@
 - [complete] Phase 4: 增加 reuse MISS 指纹组成摘要，定位 system/tools/caller/history 漂移。
 - [complete] Phase 5: 增加 Dashboard 运行时业务 env 配置页，避免 Docker/SQLite 覆盖 `.env` 难排查。
 - [complete] Phase 6: 增加 Cascade checkin 的 after projectedHash 诊断，定位 CCTest tool-call 链 fpAfter/fpBefore 不一致。
+- [complete] Phase 7: 增加 Dashboard 服务重启按钮，保存运行时配置后可由 Docker/进程守护重新拉起并读取 SQLite 覆盖配置。

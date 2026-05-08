@@ -18,7 +18,7 @@ import {
   getDroughtSummary,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
-import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
+import { getLsStatus, stopLanguageServer, stopLanguageServerAndWait, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
 import { getStats, resetStats, recordRequest } from './stats.js';
 import { cacheStats, cacheClear } from '../cache.js';
 import {
@@ -122,6 +122,25 @@ function json(res, status, body) {
     'Access-Control-Allow-Headers': 'Content-Type, X-Dashboard-Password',
   });
   res.end(data);
+}
+
+let serviceRestartScheduled = false;
+
+function scheduleServiceRestart(reason = 'dashboard') {
+  if (serviceRestartScheduled) return false;
+  serviceRestartScheduled = true;
+  const timer = setTimeout(async () => {
+    log.info(`service-restart: stopping LS pool before exit reason=${reason}`);
+    try {
+      await stopLanguageServerAndWait({ perProcessTimeoutMs: 1500 });
+    } catch (e) {
+      log.warn(`service-restart: stopLanguageServer failed: ${e.message}`);
+    }
+    log.info('service-restart: exiting for supervisor/docker restart');
+    process.exit(0);
+  }, 800);
+  if (typeof timer.unref === 'function') timer.unref();
+  return true;
 }
 
 // v2.0.56: client IP extraction. Mirrors caller-key.js TRUST_PROXY_XFF
@@ -1107,6 +1126,20 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     const env = setBusinessEnvConfig(body.env && typeof body.env === 'object' ? body.env : body);
     log.info(`Settings: runtime env updated from ${dashboardClientIp(req) || 'unknown'}`);
     return json(res, 200, { success: true, env });
+  }
+
+  if (subpath === '/service/restart' && method === 'POST') {
+    if (!body?.confirm) {
+      return json(res, 400, { error: 'Send { confirm: true } to restart service' });
+    }
+    const scheduled = scheduleServiceRestart('dashboard');
+    return json(res, 200, {
+      success: true,
+      restarting: true,
+      scheduled,
+      delayMs: 800,
+      message: scheduled ? 'Service restart scheduled' : 'Service restart already scheduled',
+    });
   }
 
   if (subpath === '/proxy' && method === 'GET') {

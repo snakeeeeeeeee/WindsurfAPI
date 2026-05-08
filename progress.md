@@ -20,3 +20,5 @@
 - Added `projectedHashAfter` / `projectedTurnsAfter` to Cascade reuse checkin logs so tool-call chain mismatches can be compared directly with the next request's `projectedHash`.
 - Verification passed: `node --check src/dashboard/api.js && node --check src/handlers/chat.js`, `node --test test/dashboard-api.test.js test/runtime-config-sqlite.test.js test/chat-reuse.test.js test/conversation-pool.test.js`, and `git diff --check`.
 - Known verification gap: `node --test test/dashboard-syntax.test.js test/check-i18n.test.js` still fails in `check-i18n` because the existing dashboard has many pre-existing hardcoded Chinese strings unrelated to this change; the inline-script syntax checks pass.
+- Added `/dashboard/api/service/restart` plus default/sketch Dashboard buttons in the runtime env panel. The route requires `{ confirm: true }`, stops the LS pool with `stopLanguageServerAndWait`, then exits so Docker/PM2 can restart the API and reload persisted config.
+- Verification passed for restart UI/API: `node --check src/dashboard/api.js`, `node --test test/dashboard-api.test.js`, `node --test test/dashboard-syntax.test.js`, and `git diff --check`.

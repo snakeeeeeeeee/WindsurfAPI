@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -42,6 +42,16 @@ function fakeRes() {
 }
 
 describe('dashboard batch import proxy binding', () => {
+  it('wires a guarded service restart route for Docker/supervisor restarts', () => {
+    const api = readFileSync(new URL('../src/dashboard/api.js', import.meta.url), 'utf8');
+    const route = api.match(/subpath === '\/service\/restart' && method === 'POST'[\s\S]+?if \(subpath === '\/proxy'/)?.[0] || '';
+    assert.match(route, /body\?\.confirm/, 'service restart must require explicit confirmation');
+    assert.match(route, /scheduleServiceRestart\('dashboard'\)/, 'service restart must use the scheduler');
+    assert.match(api, /let serviceRestartScheduled = false/, 'scheduler must guard repeated clicks');
+    assert.match(api, /stopLanguageServerAndWait/, 'service restart should stop the LS pool before exiting');
+    assert.match(api, /process\.exit\(0\)/, 'service restart should let Docker or the supervisor restart the API process');
+  });
+
   it('uses nested result.account.id from processWindsurfLogin output', () => {
     const binding = buildBatchProxyBinding(
       { success: true, account: { id: 'acct_123' } },

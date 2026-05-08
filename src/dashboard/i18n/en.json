@@ -665,6 +665,7 @@
   },
   "runtimeEnv": {
     "save": "Save config",
+    "restartService": "Restart service",
     "saved": "Runtime env config saved",
     "defaultValue": "Default",
     "defaultUpstream": "Default upstream",
@@ -692,6 +693,8 @@
   "confirm": {
     "restartTitle": "Restart Language Server",
     "restartDesc": "In-progress requests will fail. Continue?",
+    "restartServiceTitle": "Restart service",
+    "restartServiceDesc": "The API process will exit and Docker or the process supervisor must start it again. The dashboard will be briefly unavailable. Continue?",
     "updateLsTitle": "Update LS Binary",
     "updateLsDesc": "Download the latest language_server from the WindsurfAPI / Exafunction GitHub release and restart the LS pool. In-flight requests will fail once.",
     "updateLsButton": "Update",
@@ -952,6 +955,7 @@
     "copyFailedError": "Copy failed: {{error}}",
     "enterEmailPassword": "Please enter email and password",
     "restarting": "Language Server restarting...",
+    "serviceRestarting": "Service restarting; this page will reload shortly...",
     "lsBinaryUpdating": "Updating LS binary…",
     "lsBinaryUpdated": "LS binary updated ({{before}} → {{after}}), restarted {{count}} instance(s)",
     "lsBinaryUpdatedColdPool": "LS binary updated ({{before}} → {{after}}), no running instances; new binary loads on next request",
