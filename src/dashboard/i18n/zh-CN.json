@@ -170,6 +170,21 @@
     "promptNA": "该账号无提示词额度数据",
     "noResetTime": "重置时间未知"
   },
+  "rpmEstimator": {
+    "title": "估算 RPM",
+    "desc": "按当前账号池、模型 CD 和本地 60 秒窗口估算容量",
+    "modelLabel": "按模型估算",
+    "modelPlaceholder": "留空 = 不按模型过滤",
+    "allModels": "全部模型",
+    "localRemaining": "本地剩余",
+    "localMeta": "{{model}} · 本地窗口上限 {{limit}} RPM",
+    "minimum": "最低",
+    "conservative": "保守",
+    "aggressive": "激进",
+    "perAccount": "{{count}} RPM/号",
+    "breakdown": "账号 {{total}} 个，active {{active}} 个；当前可参与 {{eligible}} 个，模型/全局 CD {{cooling}} 个，无该模型权限 {{noModel}} 个；最近恢复 {{nextReady}}。",
+    "help": "算法：先取 active 账号，再过滤当前模型权限、blockedModels、全局 CD、模型 CD、availability CD；本地剩余 = Σ(max(rpmLimit - rpmUsed, 0))。最低/保守/激进 = 可参与账号数 × 3/5/8 RPM/号。当前模型：{{model}}；可参与 {{eligible}}，CD {{cooling}}，无权限 {{noModel}}，本地剩余 {{localRemaining}}。"
+  },
   "section": {
     "banStatus": {
       "title": "健康状态"

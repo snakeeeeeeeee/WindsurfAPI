@@ -524,6 +524,100 @@ code, .mono {
 .metric.warn .m-value { color: var(--warn); }
 .metric.error .m-value { color: var(--error); }
 
+/* ─── RPM estimator ─────────────────────────── */
+.rpm-estimator {
+  padding: 16px;
+  border-bottom: 1px dashed var(--rule-soft);
+  background: var(--paper-2);
+}
+.rpm-estimator-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.rpm-estimator-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Fraunces', serif;
+  font-size: 18px;
+}
+.rpm-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  color: var(--accent);
+  background: var(--paper);
+  font-family: 'Caveat', cursive;
+  font-size: 16px;
+  cursor: help;
+}
+.rpm-estimator-desc {
+  color: var(--ink-mute);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.rpm-model-filter {
+  min-width: 240px;
+  max-width: 360px;
+  flex: 1;
+}
+.rpm-estimator-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.25fr) repeat(3, minmax(120px, .75fr));
+  gap: 0;
+  border: 1.5px solid var(--ink);
+  background: var(--paper);
+}
+.rpm-estimator-card {
+  padding: 12px;
+  border-right: 1px dashed var(--rule-soft);
+  min-width: 0;
+}
+.rpm-estimator-card:last-child { border-right: 0; }
+.rpm-estimator-card.primary { background: var(--accent-soft); }
+.rpm-estimator-label {
+  color: var(--ink-mute);
+  font-family: 'Caveat', cursive;
+  font-size: 16px;
+}
+.rpm-estimator-value {
+  margin-top: 2px;
+  font-family: 'Fraunces', serif;
+  font-size: 30px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.rpm-estimator-card.primary .rpm-estimator-value { color: var(--accent); }
+.rpm-estimator-meta {
+  margin-top: 5px;
+  color: var(--ink-mute);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.rpm-estimator-breakdown {
+  margin-top: 10px;
+  color: var(--ink-mute);
+  font-size: 12px;
+  line-height: 1.55;
+}
+@media (max-width: 900px) {
+  .rpm-estimator-grid { grid-template-columns: 1fr 1fr; }
+  .rpm-estimator-card { border-bottom: 1px dashed var(--rule-soft); }
+  .rpm-model-filter { max-width: none; }
+}
+@media (max-width: 640px) {
+  .rpm-estimator-grid { grid-template-columns: 1fr; }
+  .rpm-estimator-card { border-right: 0; }
+}
+
 /* ─── Buttons ──────────────────────────────── */
 .btn {
   display: inline-flex;
@@ -1772,6 +1866,7 @@ window._firebaseOAuth = async function(provider) {
         <div><div class="section-title"><span class="num">▤</span><span data-zh="账号池" data-en="Account pool">账号池</span></div></div>
       </div>
       <div class="frame tight"><div class="frame-body tight">
+        <div id="accounts-rpm-estimator" class="rpm-estimator"></div>
         <div class="table-wrap">
           <table id="accounts-table">
             <thead><tr>
@@ -2169,7 +2264,9 @@ const App = {
   modelAccessConfig: { mode: 'all', list: [] },
   loginHistory: JSON.parse(localStorage.getItem('wl_history') || '[]'),
   _expandedAccounts: new Set(),
+  _accountsById: new Map(),
   _modelsCatalog: null,
+  _rpmEstimatorModel: localStorage.getItem('accounts_rpm_model') || 'claude-opus-4-7-high',
 
   /* ── theme ── */
   toggleTheme() {
@@ -2394,6 +2491,16 @@ const App = {
     if (d) return `${d}d ${h}h`;
     if (h) return `${h}h ${m}m`;
     return `${m}m ${s % 60}s`;
+  },
+  fmtMsDuration(ms) {
+    const n = Math.max(0, Number(ms) || 0);
+    if (n < 1000) return '0s';
+    const s = Math.ceil(n / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ${s % 60}s`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m`;
   },
 
   /* ── update ── */
@@ -2803,6 +2910,8 @@ const App = {
 
     const tbody = document.querySelector('#accounts-table tbody');
     const tierLabel = { pro: 'PRO', free: 'FREE', expired: 'EXP', unknown: '?' };
+    this._accountsById = new Map((d.accounts || []).map(a => [a.id, a]));
+    this.renderRpmEstimator(d.accounts || []);
     tbody.innerHTML = (d.accounts || []).map(a => {
       const tier = a.tier || 'unknown';
       const tierModels = a.tierModels || [];
@@ -2866,6 +2975,160 @@ const App = {
         </div></td>
       </tr>${isExpanded ? `<tr class="detail-row"><td colspan="11">${this.renderAccountDetail(a)}</td></tr>` : ''}`;
     }).join('') || `<tr class="empty-row"><td colspan="11">no accounts yet · paste a key above ↑ or grab one from /windsurf-login</td></tr>`;
+  },
+
+  setRpmEstimatorModel(value) {
+    this._rpmEstimatorModel = String(value || '').trim();
+    localStorage.setItem('accounts_rpm_model', this._rpmEstimatorModel);
+    this.renderRpmEstimator(Array.from(this._accountsById?.values?.() || []));
+  },
+
+  rpmEstimatorModelLabel(modelKey) {
+    return modelKey || (I18n.locale === 'en' ? 'all models' : '全部模型');
+  },
+
+  formatRpmNumber(n) {
+    const v = Math.max(0, Number(n) || 0);
+    if (v >= 1000) return Math.round(v).toLocaleString();
+    return String(Math.round(v));
+  },
+
+  rpmAccountAllowsModel(account, modelKey) {
+    if (!modelKey) return true;
+    const available = Array.isArray(account.availableModels) ? account.availableModels : [];
+    if (available.length) return available.includes(modelKey);
+    const blocked = new Set(account.blockedModels || []);
+    if (blocked.has(modelKey)) return false;
+    const tierModels = Array.isArray(account.tierModels) ? account.tierModels : [];
+    return !tierModels.length || tierModels.includes(modelKey);
+  },
+
+  rpmCooldownUntil(account, modelKey) {
+    const now = Date.now();
+    const values = [
+      account.rateLimitedUntil,
+      account.availabilityCooldowns?.['*'],
+      account.availability?.globalCooldownUntil,
+    ];
+    if (modelKey) {
+      values.push(account.modelRateLimits?.[modelKey]);
+      values.push(account.availabilityCooldowns?.[modelKey]);
+      for (const cd of (account.availability?.cooldowns || [])) {
+        if (cd?.modelKey === modelKey || cd?.modelKey === '*') values.push(cd.until);
+      }
+    }
+    return values.reduce((max, raw) => {
+      const n = Number(raw || 0);
+      return n > now ? Math.max(max, n) : max;
+    }, 0);
+  },
+
+  estimateRpm(accounts = [], modelKey = '') {
+    const now = Date.now();
+    const active = accounts.filter(a => a.status === 'active');
+    let eligible = 0;
+    let cooling = 0;
+    let noModel = 0;
+    let localLimit = 0;
+    let localRemaining = 0;
+    let nextReadyAt = 0;
+
+    for (const account of active) {
+      if (!this.rpmAccountAllowsModel(account, modelKey)) {
+        noModel++;
+        continue;
+      }
+      const until = this.rpmCooldownUntil(account, modelKey);
+      if (until > now) {
+        cooling++;
+        nextReadyAt = nextReadyAt ? Math.min(nextReadyAt, until) : until;
+        continue;
+      }
+      const limit = Math.max(0, Number(account.rpmLimit || 0));
+      const used = Math.max(0, Number(account.rpmUsed || 0));
+      eligible++;
+      localLimit += limit;
+      localRemaining += Math.max(0, limit - used);
+    }
+
+    return {
+      total: accounts.length,
+      active: active.length,
+      eligible,
+      cooling,
+      noModel,
+      localLimit,
+      localRemaining,
+      nextReadyAt,
+      bands: {
+        minimum: eligible * 3,
+        conservative: eligible * 5,
+        aggressive: eligible * 8,
+      },
+    };
+  },
+
+  renderRpmEstimator(accounts = []) {
+    const el = document.getElementById('accounts-rpm-estimator');
+    if (!el) return;
+    const zh = I18n.locale !== 'en';
+    const modelKey = String(this._rpmEstimatorModel || '').trim();
+    const s = this.estimateRpm(accounts, modelKey);
+    const modelLabel = this.rpmEstimatorModelLabel(modelKey);
+    const nextReady = s.nextReadyAt ? this.fmtMsDuration(s.nextReadyAt - Date.now()) : '—';
+    const text = zh
+      ? {
+          title: '估算 RPM',
+          desc: '按账号池、模型 CD 和本地 60 秒窗口估算',
+          model: '按模型估算',
+          placeholder: '留空 = 不按模型过滤',
+          local: '本地剩余',
+          localMeta: `${modelLabel} · 本地窗口上限 ${this.formatRpmNumber(s.localLimit)} RPM`,
+          min: '最低',
+          safe: '保守',
+          high: '激进',
+          per: n => `${n} RPM/号`,
+          breakdown: `账号 ${s.total} 个，active ${s.active} 个；可参与 ${s.eligible} 个，CD ${s.cooling} 个，无权限 ${s.noModel} 个；最近恢复 ${nextReady}。`,
+          help: `算法：active 账号 - 当前模型无权限 - 全局/模型 CD；本地剩余 = Σ(max(rpmLimit - rpmUsed, 0))；三档 = 可参与账号数 × 3/5/8 RPM/号。当前 ${modelLabel}，可参与 ${s.eligible}，CD ${s.cooling}，无权限 ${s.noModel}。`,
+        }
+      : {
+          title: 'Estimated RPM',
+          desc: 'From account pool, model cooldowns, and local 60s window',
+          model: 'Model filter',
+          placeholder: 'Empty = no model filter',
+          local: 'Local remaining',
+          localMeta: `${modelLabel} · local window limit ${this.formatRpmNumber(s.localLimit)} RPM`,
+          min: 'Minimum',
+          safe: 'Conservative',
+          high: 'Aggressive',
+          per: n => `${n} RPM/account`,
+          breakdown: `${s.total} accounts, ${s.active} active; ${s.eligible} eligible, ${s.cooling} cooling, ${s.noModel} without access; next recovery ${nextReady}.`,
+          help: `Formula: active accounts minus no model access and global/model cooldown. Local remaining = Σ(max(rpmLimit - rpmUsed, 0)); bands = eligible accounts × 3/5/8 RPM/account. Current ${modelLabel}, eligible ${s.eligible}, cooldown ${s.cooling}, no access ${s.noModel}.`,
+        };
+    const card = (label, value, meta, primary = false) => `
+      <div class="rpm-estimator-card ${primary ? 'primary' : ''}">
+        <div class="rpm-estimator-label">${this.esc(label)}</div>
+        <div class="rpm-estimator-value">${this.formatRpmNumber(value)}</div>
+        <div class="rpm-estimator-meta">${this.esc(meta)}</div>
+      </div>`;
+    el.innerHTML = `
+      <div class="rpm-estimator-head">
+        <div>
+          <div class="rpm-estimator-title"><span>${this.esc(text.title)}</span><span class="rpm-help" title="${this.esc(text.help)}">?</span></div>
+          <div class="rpm-estimator-desc">${this.esc(text.desc)}</div>
+        </div>
+        <div class="rpm-model-filter">
+          <label class="field-label" for="rpm-model-filter">${this.esc(text.model)}</label>
+          <input id="rpm-model-filter" class="input" value="${this.esc(modelKey)}" placeholder="${this.esc(text.placeholder)}" onchange="App.setRpmEstimatorModel(this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+        </div>
+      </div>
+      <div class="rpm-estimator-grid">
+        ${card(text.local, s.localRemaining, text.localMeta, true)}
+        ${card(text.min, s.bands.minimum, text.per(3))}
+        ${card(text.safe, s.bands.conservative, text.per(5))}
+        ${card(text.high, s.bands.aggressive, text.per(8))}
+      </div>
+      <div class="rpm-estimator-breakdown">${this.esc(text.breakdown)}</div>`;
   },
 
   toggleAccountDetail(id) {

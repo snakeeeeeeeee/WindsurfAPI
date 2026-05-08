@@ -170,6 +170,21 @@
     "promptNA": "No prompt-credit data for this account",
     "noResetTime": "reset time unknown"
   },
+  "rpmEstimator": {
+    "title": "Estimated RPM",
+    "desc": "Estimated from the current account pool, model cooldowns, and the local 60s RPM window",
+    "modelLabel": "Model filter",
+    "modelPlaceholder": "Empty = do not filter by model",
+    "allModels": "All models",
+    "localRemaining": "Local remaining",
+    "localMeta": "{{model}} · local window limit {{limit}} RPM",
+    "minimum": "Minimum",
+    "conservative": "Conservative",
+    "aggressive": "Aggressive",
+    "perAccount": "{{count}} RPM/account",
+    "breakdown": "{{total}} accounts, {{active}} active; {{eligible}} eligible now, {{cooling}} in model/global cooldown, {{noModel}} without model access; next recovery {{nextReady}}.",
+    "help": "Formula: start with active accounts, then filter by current model access, blockedModels, global cooldown, model cooldown, and availability cooldown. Local remaining = Σ(max(rpmLimit - rpmUsed, 0)). Minimum/conservative/aggressive = eligible accounts × 3/5/8 RPM/account. Current model: {{model}}; eligible {{eligible}}, cooldown {{cooling}}, no access {{noModel}}, local remaining {{localRemaining}}."
+  },
   "section": {
     "banStatus": {
       "title": "Health Status"

@@ -291,6 +291,100 @@ code {
 }
 .account-proxy-summary .mini-stat.success b { color: var(--success); }
 .account-proxy-summary .mini-stat.error b { color: var(--error); }
+.rpm-estimator {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.rpm-estimator-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.rpm-estimator-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.rpm-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--surface-2);
+  font-size: 12px;
+  cursor: help;
+}
+.rpm-estimator-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.rpm-model-filter {
+  min-width: 240px;
+  max-width: 360px;
+  flex: 1;
+}
+.rpm-estimator-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.25fr) repeat(3, minmax(120px, .75fr));
+  gap: 10px;
+}
+.rpm-estimator-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 12px;
+  min-width: 0;
+}
+.rpm-estimator-card.primary {
+  background: linear-gradient(180deg, rgba(99,102,241,.12), rgba(99,102,241,.04));
+  border-color: rgba(99,102,241,.35);
+}
+.rpm-estimator-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.rpm-estimator-value {
+  margin-top: 4px;
+  font-size: 24px;
+  line-height: 1.15;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rpm-estimator-card.primary .rpm-estimator-value { color: var(--accent); }
+.rpm-estimator-meta {
+  margin-top: 5px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.rpm-estimator-breakdown {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+@media (max-width: 900px) {
+  .rpm-estimator-grid { grid-template-columns: 1fr 1fr; }
+  .rpm-model-filter { max-width: none; }
+}
+@media (max-width: 640px) {
+  .rpm-estimator-grid { grid-template-columns: 1fr; }
+}
 
 /* Selection column — keep narrow so the table layout doesn't shift */
 #accounts-table th.th-select,
@@ -1973,6 +2067,7 @@ window._firebaseOAuth = async function(provider) {
       </div>
       <div class="section-body tight">
         <div id="accounts-proxy-summary" class="account-proxy-summary"></div>
+        <div id="accounts-rpm-estimator" class="rpm-estimator"></div>
         <div class="table-wrap">
           <table id="accounts-table">
             <thead><tr><th class="th-select"><input type="checkbox" id="accounts-select-all" onchange="App.toggleAllAccountsSelection(this.checked)" title="全选/取消全选"></th><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th class="th-help" data-i18n="table.header.credits" data-i18n-title="creditsBar.columnTooltip" title="配额使用情况&#10;&#10;日 — 每日高级请求剩余百分比（重置频繁）&#10;周 — 每周高级请求剩余百分比（Trial 账号重点看这条）&#10;&#10;数值越高 = 剩余越多 = 越安全&#10;悬停单条进度条可查看重置时间">余额</th><th data-i18n="table.header.models">可用模型</th><th>可用性</th><th>代理 IP</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
@@ -4118,6 +4213,7 @@ docker compose up -d --force-recreate</pre>
     const tierLabel = { pro: 'PRO', free: 'FREE', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
     this._accountsById = new Map((d.accounts || []).map(a => [a.id, a]));
     this.renderAccountsProxySummary(d.accounts || []);
+    this.renderRpmEstimator(d.accounts || []);
     tbody.innerHTML = (d.accounts || []).map(a => {
       const tier = a.tier || 'unknown';
       // GetUserStatus snapshot — authoritative plan/trial/credit info (may be null)
@@ -4282,6 +4378,7 @@ docker compose up -d --force-recreate</pre>
   _expandedAccounts: new Set(),
   _selectedAccounts: new Set(),
   _modelsCatalog: null,
+  _rpmEstimatorModel: localStorage.getItem('accounts_rpm_model') || 'claude-opus-4-7-high',
 
   renderAccountsProxySummary(accounts) {
     const el = document.getElementById('accounts-proxy-summary');
@@ -4304,6 +4401,155 @@ docker compose up -d --force-recreate</pre>
       <div class="mini-stat"><span>验证/换 IP 中</span><b>${pending}</b></div>
       <div class="mini-stat"><span>已暂停</span><b>${suspended}</b></div>
       <div class="mini-stat"><span>覆盖率</span><b>${coverage}%</b></div>`;
+  },
+
+  setRpmEstimatorModel(value) {
+    this._rpmEstimatorModel = String(value || '').trim();
+    localStorage.setItem('accounts_rpm_model', this._rpmEstimatorModel);
+    this.renderRpmEstimator(Array.from(this._accountsById?.values?.() || []));
+  },
+
+  rpmEstimatorModelLabel(modelKey) {
+    return modelKey || I18n.t('rpmEstimator.allModels');
+  },
+
+  formatRpmNumber(n) {
+    const v = Math.max(0, Number(n) || 0);
+    if (v >= 1000) return Math.round(v).toLocaleString();
+    return String(Math.round(v));
+  },
+
+  rpmAccountAllowsModel(account, modelKey) {
+    if (!modelKey) return true;
+    const available = Array.isArray(account.availableModels) ? account.availableModels : [];
+    if (available.length) return available.includes(modelKey);
+    const blocked = new Set(account.blockedModels || []);
+    if (blocked.has(modelKey)) return false;
+    const tierModels = Array.isArray(account.tierModels) ? account.tierModels : [];
+    return !tierModels.length || tierModels.includes(modelKey);
+  },
+
+  rpmCooldownUntil(account, modelKey) {
+    const now = Date.now();
+    const values = [
+      account.rateLimitedUntil,
+      account.availabilityCooldowns?.['*'],
+      account.availability?.globalCooldownUntil,
+    ];
+    if (modelKey) {
+      values.push(account.modelRateLimits?.[modelKey]);
+      values.push(account.availabilityCooldowns?.[modelKey]);
+      for (const cd of (account.availability?.cooldowns || [])) {
+        if (cd?.modelKey === modelKey || cd?.modelKey === '*') values.push(cd.until);
+      }
+    }
+    return values.reduce((max, raw) => {
+      const n = Number(raw || 0);
+      return n > now ? Math.max(max, n) : max;
+    }, 0);
+  },
+
+  estimateRpm(accounts = [], modelKey = '') {
+    const now = Date.now();
+    const active = accounts.filter(a => a.status === 'active');
+    let eligible = 0;
+    let cooling = 0;
+    let noModel = 0;
+    let localLimit = 0;
+    let localRemaining = 0;
+    let nextReadyAt = 0;
+
+    for (const account of active) {
+      if (!this.rpmAccountAllowsModel(account, modelKey)) {
+        noModel++;
+        continue;
+      }
+      const until = this.rpmCooldownUntil(account, modelKey);
+      if (until > now) {
+        cooling++;
+        nextReadyAt = nextReadyAt ? Math.min(nextReadyAt, until) : until;
+        continue;
+      }
+      const limit = Math.max(0, Number(account.rpmLimit || 0));
+      const used = Math.max(0, Number(account.rpmUsed || 0));
+      eligible++;
+      localLimit += limit;
+      localRemaining += Math.max(0, limit - used);
+    }
+
+    const bands = {
+      minimum: eligible * 3,
+      conservative: eligible * 5,
+      aggressive: eligible * 8,
+    };
+    return {
+      modelKey,
+      total: accounts.length,
+      active: active.length,
+      eligible,
+      cooling,
+      noModel,
+      localLimit,
+      localRemaining,
+      nextReadyAt,
+      bands,
+    };
+  },
+
+  renderRpmEstimator(accounts = []) {
+    const el = document.getElementById('accounts-rpm-estimator');
+    if (!el) return;
+    const modelKey = String(this._rpmEstimatorModel || '').trim();
+    const s = this.estimateRpm(accounts, modelKey);
+    const modelLabel = this.rpmEstimatorModelLabel(modelKey);
+    const nextReady = s.nextReadyAt ? this.fmtMsDuration(s.nextReadyAt - Date.now()) : '-';
+    const help = I18n.t('rpmEstimator.help', {
+      model: modelLabel,
+      eligible: s.eligible,
+      cooling: s.cooling,
+      noModel: s.noModel,
+      localRemaining: this.formatRpmNumber(s.localRemaining),
+    });
+    const band = (key, value, perAccount) => `
+      <div class="rpm-estimator-card">
+        <div class="rpm-estimator-label">${this.esc(I18n.t(`rpmEstimator.${key}`))}</div>
+        <div class="rpm-estimator-value">${this.formatRpmNumber(value)}</div>
+        <div class="rpm-estimator-meta">${this.esc(I18n.t('rpmEstimator.perAccount', { count: perAccount }))}</div>
+      </div>`;
+    el.innerHTML = `
+      <div class="rpm-estimator-head">
+        <div>
+          <div class="rpm-estimator-title">
+            <span>${this.esc(I18n.t('rpmEstimator.title'))}</span>
+            <span class="rpm-help" title="${this.esc(help)}">?</span>
+          </div>
+          <div class="rpm-estimator-desc">${this.esc(I18n.t('rpmEstimator.desc'))}</div>
+        </div>
+        <div class="rpm-model-filter">
+          <label class="field-label" for="rpm-model-filter">${this.esc(I18n.t('rpmEstimator.modelLabel'))}</label>
+          <input id="rpm-model-filter" class="input" value="${this.esc(modelKey)}" placeholder="${this.esc(I18n.t('rpmEstimator.modelPlaceholder'))}" onchange="App.setRpmEstimatorModel(this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+        </div>
+      </div>
+      <div class="rpm-estimator-grid">
+        <div class="rpm-estimator-card primary">
+          <div class="rpm-estimator-label">${this.esc(I18n.t('rpmEstimator.localRemaining'))}</div>
+          <div class="rpm-estimator-value">${this.formatRpmNumber(s.localRemaining)}</div>
+          <div class="rpm-estimator-meta">${this.esc(I18n.t('rpmEstimator.localMeta', { limit: this.formatRpmNumber(s.localLimit), model: modelLabel }))}</div>
+        </div>
+        ${band('minimum', s.bands.minimum, 3)}
+        ${band('conservative', s.bands.conservative, 5)}
+        ${band('aggressive', s.bands.aggressive, 8)}
+      </div>
+      <div class="rpm-estimator-breakdown">
+        ${this.esc(I18n.t('rpmEstimator.breakdown', {
+          total: s.total,
+          active: s.active,
+          eligible: s.eligible,
+          cooling: s.cooling,
+          noModel: s.noModel,
+          nextReady,
+        }))}
+      </div>`;
   },
   _accountsById: new Map(),
 
