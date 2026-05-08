@@ -24,3 +24,6 @@
 - Verification passed for restart UI/API: `node --check src/dashboard/api.js`, `node --test test/dashboard-api.test.js`, `node --test test/dashboard-syntax.test.js`, and `git diff --check`.
 - Fixed Cascade reuse fingerprinting for multi-tool continuations: `priorTurnsForBefore()` now drops a contiguous trailing group of `tool` messages instead of only the last tool result, so `assistant tool_calls -> tool results` can round-trip through fpAfter/fpBefore.
 - Verification passed for the reuse fix: `node --check src/conversation-pool.js`, `node --test test/conversation-pool.test.js`, `node --test test/chat-reuse.test.js`, and `git diff --check`.
+- Added assistant tool_call argument shape normalization for nested `function.arguments`, top-level `arguments`, top-level `argumentsJson`, and `input`, matching common OpenAI-compatible client history variants.
+- Made `cleanupOrphanLanguageServers()` skip quietly when `ps` is absent in Alpine/minimal containers, removing startup WARN noise without changing LS startup.
+- Verification passed: `node --check src/conversation-pool.js`, `node --check src/langserver.js`, `node --test test/conversation-pool.test.js test/chat-reuse.test.js`, and `git diff --check`.

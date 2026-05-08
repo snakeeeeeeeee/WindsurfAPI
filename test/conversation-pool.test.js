@@ -242,6 +242,44 @@ describe('fingerprintAfter', () => {
       fingerprintBefore(beforeToolContinuation, 'm', 'c')
     );
   });
+
+  it('canonicalizes assistant tool_call arguments from common client shapes', () => {
+    const nested = [
+      { role: 'user', content: 'run command' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'Bash', arguments: '{"command":"pwd"}' } },
+        ],
+      },
+      { role: 'user', content: 'next' },
+    ];
+    const topLevelArguments = [
+      { role: 'user', content: 'run command' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', name: 'Bash', arguments: '{"command":"pwd"}' },
+        ],
+      },
+      { role: 'user', content: 'next' },
+    ];
+    const topLevelArgumentsJson = [
+      { role: 'user', content: 'run command' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', name: 'Bash', argumentsJson: '{"command":"pwd"}' },
+        ],
+      },
+      { role: 'user', content: 'next' },
+    ];
+    assert.equal(fingerprintBefore(nested, 'm', 'c'), fingerprintBefore(topLevelArguments, 'm', 'c'));
+    assert.equal(fingerprintBefore(nested, 'm', 'c'), fingerprintBefore(topLevelArgumentsJson, 'm', 'c'));
+  });
 });
 
 describe('fingerprintDebug', () => {

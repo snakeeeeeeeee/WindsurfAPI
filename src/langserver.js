@@ -523,6 +523,12 @@ export function cleanupOrphanLanguageServers() {
   }
   const targetBinaries = new Set([_binaryPath, DEFAULT_BINARY]);
   try {
+    try {
+      execSync('command -v ps', { timeout: 1000, stdio: 'ignore' });
+    } catch {
+      log.debug('cleanupOrphanLanguageServers: ps not found; skipping orphan scan');
+      return { scanned: 0, killed: 0 };
+    }
     // -e: every process; -o pid,args: pid + full argv (so we can match
     // the binary path). Cap output at a few hundred lines via head; LS
     // pids are typically small clusters, not thousands.

@@ -274,15 +274,13 @@ function projectAssistantToolCalls(m) {
   if (Array.isArray(m?.tool_calls)) {
     for (const tc of m.tool_calls) {
       const name = tc?.function?.name || tc?.name || '';
-      const args = tc?.function?.arguments;
+      const args = tc?.function?.arguments ?? tc?.argumentsJson ?? tc?.arguments ?? tc?.input;
       let argsCanonical;
       if (typeof args === 'string') {
         try { argsCanonical = stableStringify(JSON.parse(args)); }
         catch { argsCanonical = args; }
       } else if (args !== undefined) {
         argsCanonical = stableStringify(args);
-      } else if (tc?.input !== undefined) {
-        argsCanonical = stableStringify(tc.input);
       } else {
         argsCanonical = '';
       }

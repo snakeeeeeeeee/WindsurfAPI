@@ -25,3 +25,5 @@
 - Docker Compose 已配置 `restart: unless-stopped` 时，Dashboard 普通服务重启不需要 Docker socket；API 返回成功后受控 `process.exit(0)`，由 Docker 拉起新进程，新进程会按启动流程重新加载 `.env` 和 SQLite runtime-config 覆盖值。
 - 真实日志里 `HIT` 后客户端中断会因为 checkout 已取走 entry 而导致下一次同 fp MISS；但该请求已经进入同一 Cascade，恢复旧 entry 有重复发送同一 user turn 的风险，不应盲目回填。
 - 真实日志里 `toolCalls=5` 后下一轮变成 MISS 的更确定原因是 `fingerprintBefore()` 只剥掉最后一个 trailing `tool` 消息；OpenAI/Codex 会一次带回多个连续 tool results，必须把整组 trailing tool results 作为最新输入 turn 一起剥掉，才能匹配上一轮 assistant tool_calls checkin 的 fpAfter。
+- 2026-05-09 CCTest 日志里 input tokens 已恢复为真实上游 `570`，说明 Dashboard 清空 Fresh input tokens 覆盖后 SQLite runtime config 已生效；剩余高倍率主要来自工具链多轮 `reuse MISS` 和 cache_read 仅约 4401。
+- 同一日志里单个 `toolCalls=1` 后下一轮仍 MISS，说明不仅是连续 tool results；客户端历史里的 assistant `tool_calls` 参数可能使用顶层 `arguments` / `argumentsJson`，而本地合成 checkin 使用 `function.arguments`。指纹投影需要兼容这些常见形态。
