@@ -215,6 +215,33 @@ describe('fingerprintAfter', () => {
       fingerprintBefore(turn2, 'm', 'c')
     );
   });
+
+  it('after(assistant tool_calls) matches before(contiguous tool results)', () => {
+    const assistant = {
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        { id: 'call_a', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.js"}' } },
+        { id: 'call_b', type: 'function', function: { name: 'read_file', arguments: '{"path":"b.js"}' } },
+        { id: 'call_c', type: 'function', function: { name: 'run_tests', arguments: '{"target":"unit"}' } },
+      ],
+    };
+    const afterAssistant = [
+      { role: 'user', content: 'inspect these files' },
+      assistant,
+    ];
+    const beforeToolContinuation = [
+      { role: 'user', content: 'inspect these files' },
+      assistant,
+      { role: 'tool', tool_call_id: 'call_a', content: 'a.js contents' },
+      { role: 'tool', tool_call_id: 'call_b', content: 'b.js contents' },
+      { role: 'tool', tool_call_id: 'call_c', content: 'tests passed' },
+    ];
+    assert.equal(
+      fingerprintAfter(afterAssistant, 'm', 'c'),
+      fingerprintBefore(beforeToolContinuation, 'm', 'c')
+    );
+  });
 });
 
 describe('fingerprintDebug', () => {

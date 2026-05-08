@@ -381,12 +381,20 @@ function toolContextDigest(opts = {}) {
   }), 32);
 }
 
-// Build the array of stable turns up to (but not including) the newest user
-// or tool turn. This is what fpBefore digests. It includes every assistant
-// turn and every system/user/tool turn except the trailing user/tool turn.
+// Build the array of stable turns up to (but not including) the newest
+// inbound turn. This is what fpBefore digests.
+//
+// A normal chat continuation ends with one newest user message, so we drop
+// that user message. Tool continuations are different: OpenAI/Codex clients
+// send one tool message per assistant tool_call, and the next request can end
+// with a contiguous group of tool results. That whole group is the newest
+// inbound "turn" and must be dropped together. Dropping only the final tool
+// result would leave the earlier sibling tool results in the fingerprint,
+// while the previous checkin was stored right after the assistant tool_calls;
+// multi-tool turns would therefore miss every time.
 function priorTurnsForBefore(messages) {
   if (!Array.isArray(messages)) return null;
-  // Find newest user/tool turn — that's the "newest" we drop.
+  // Find newest user/tool turn — that's the newest inbound turn we drop.
   let newestStable = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     const r = messages[i]?.role;
@@ -395,7 +403,13 @@ function priorTurnsForBefore(messages) {
   if (newestStable < 0) return null;
   // Need at least one prior turn to make reuse meaningful.
   if (newestStable === 0) return null;
-  return messages.slice(0, newestStable);
+  if (messages[newestStable]?.role !== 'tool') return messages.slice(0, newestStable);
+  let firstTrailingTool = newestStable;
+  while (firstTrailingTool > 0 && messages[firstTrailingTool - 1]?.role === 'tool') {
+    firstTrailingTool--;
+  }
+  if (firstTrailingTool === 0) return null;
+  return messages.slice(0, firstTrailingTool);
 }
 
 function projectTurns(turns) {

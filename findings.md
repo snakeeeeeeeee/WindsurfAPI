@@ -23,3 +23,5 @@
 - Docker 线上环境里 `.env` 不是业务 env 的唯一权威源；SQLite `runtime.config.envConfig` 会在启动时覆盖 `WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS` 等键，导致 `.env` 清空后 CCTest 仍看到 `input_tokens=1`。
 - 2026-05-08 CCTest 日志显示普通顺序对话已能 `fpBefore -> fpAfter -> next fpBefore` 连续 HIT；但工具调用链中 `checkin fpAfter` 与下一轮 `fpBefore` 持续不一致，且集中在 assistant/tool/tool_result 历史，不能通过忽略工具参数这种高风险方式直接放宽。
 - Docker Compose 已配置 `restart: unless-stopped` 时，Dashboard 普通服务重启不需要 Docker socket；API 返回成功后受控 `process.exit(0)`，由 Docker 拉起新进程，新进程会按启动流程重新加载 `.env` 和 SQLite runtime-config 覆盖值。
+- 真实日志里 `HIT` 后客户端中断会因为 checkout 已取走 entry 而导致下一次同 fp MISS；但该请求已经进入同一 Cascade，恢复旧 entry 有重复发送同一 user turn 的风险，不应盲目回填。
+- 真实日志里 `toolCalls=5` 后下一轮变成 MISS 的更确定原因是 `fingerprintBefore()` 只剥掉最后一个 trailing `tool` 消息；OpenAI/Codex 会一次带回多个连续 tool results，必须把整组 trailing tool results 作为最新输入 turn 一起剥掉，才能匹配上一轮 assistant tool_calls checkin 的 fpAfter。
