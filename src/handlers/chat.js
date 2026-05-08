@@ -2007,6 +2007,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
         route: body.__route || 'chat',
         nativeOpts,
         skipReportedUsageOverrides: !!body.__skipReportedUsageOverrides,
+        context,
       });
   }
 
@@ -2909,6 +2910,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
   // throw a ReferenceError mid-stream — the exact failure surface reported
   // in issues #82 and #83.
   const cachePolicy = deps.cachePolicy || null;
+  const requestContext = deps.context || {};
   const fpOpts = deps.fpOpts || { route: 'chat' };
   // v2.0.55 audit M2: stream parser also needs the request-declared
   // tools[] to filter out tool_calls whose name isn't on the allowlist.
@@ -3609,20 +3611,20 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // Same logic as non-stream: ≥3 accounts rate-limited for the
             // same model within 8s → Windsurf is doing IP-wide cooldown,
             // stop burning accounts and surface immediately.
-            if (isRateLimit && !context.__rlAborted) {
-              if (!context.__rateLimitEvents) context.__rateLimitEvents = [];
+            if (isRateLimit && !requestContext.__rlAborted) {
+              if (!requestContext.__rateLimitEvents) requestContext.__rateLimitEvents = [];
               const RL_WINDOW_MS = 8_000;
               const RL_BURST_THRESHOLD = 3;
               const now = Date.now();
-              context.__rateLimitEvents.push({ time: now, model: modelKey, account: acct?.id });
+              requestContext.__rateLimitEvents.push({ time: now, model: modelKey, account: acct?.id });
               const cutoff = now - RL_WINDOW_MS;
-              while (context.__rateLimitEvents.length && context.__rateLimitEvents[0].time < cutoff) {
-                context.__rateLimitEvents.shift();
+              while (requestContext.__rateLimitEvents.length && requestContext.__rateLimitEvents[0].time < cutoff) {
+                requestContext.__rateLimitEvents.shift();
               }
-              const sameModelBurst = context.__rateLimitEvents.filter(e => e.model === modelKey);
+              const sameModelBurst = requestContext.__rateLimitEvents.filter(e => e.model === modelKey);
               const dynamicProxyPool = !!acct?.proxy?.dynamicBinding;
               if (!dynamicProxyPool && sameModelBurst.length >= RL_BURST_THRESHOLD) {
-                context.__rlAborted = true;
+                requestContext.__rlAborted = true;
                 log.warn(`Chat[${reqId}] stream: IP-rate-limit burst — ${sameModelBurst.length} accounts rate-limited on ${model} within ${RL_WINDOW_MS}ms. Short-circuiting.`);
                 const cooldown = Math.max(...sameModelBurst.map(() => 30_000));
                 const fb = getFallbackForModel(modelKey || model) || pickRateLimitFallback(modelKey || model);

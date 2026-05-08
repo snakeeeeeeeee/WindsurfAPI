@@ -83,6 +83,49 @@ test('handleChatCompletions threads cachePolicy into streamResponse deps (#82, #
   );
 });
 
+test('streamResponse uses request context from deps for rate-limit burst state', () => {
+  const src = readFileSync(join(root, 'src/handlers/chat.js'), 'utf8');
+  const body = sliceStreamResponseBody(src);
+  assert.ok(body, 'streamResponse function must exist');
+
+  const stripped = body
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+
+  assert.match(
+    stripped,
+    /const\s+requestContext\s*=\s*deps\.context\s*\|\|\s*\{\}/,
+    'streamResponse must bind requestContext from deps before using request-scoped retry/rate-limit state',
+  );
+  assert.doesNotMatch(
+    stripped,
+    /\bcontext\.__/,
+    'streamResponse is a top-level helper and must not reference bare context.__ state',
+  );
+
+  const callIdx = src.indexOf('return streamResponse(');
+  assert.ok(callIdx > -1, 'handleChatCompletions must call streamResponse');
+
+  let depth = 0;
+  let endIdx = -1;
+  for (let i = callIdx + 'return streamResponse'.length; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) { endIdx = i; break; }
+    }
+  }
+  assert.ok(endIdx > callIdx, 'streamResponse call must close on a matched paren');
+
+  const callExpr = src.slice(callIdx, endIdx + 1);
+  assert.match(
+    callExpr,
+    /\bcontext\b/,
+    'streamResponse call site must pass the request context through deps for stream retry/rate-limit state',
+  );
+});
+
 test('nonStreamResponse accepts cachePolicy parameter (#82, #83)', () => {
   const src = readFileSync(join(root, 'src/handlers/chat.js'), 'utf8');
   // Function declaration must include cachePolicy parameter — without it,
