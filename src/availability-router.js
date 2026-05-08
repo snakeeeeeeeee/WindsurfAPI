@@ -9,29 +9,29 @@ import { recordAccountModelHealth } from './db.js';
 
 const PREFIX = 'wsapi';
 const DEFAULTS = {
-  mode: 'aggressive',
+  mode: 'passive_strong',
   probeConcurrencyPerModel: 3,
-  backgroundProbePerModel: 2,
-  backgroundProbeGlobal: 5,
-  modelBreakerMinMs: 60000,
+  backgroundProbePerModel: 0,
+  backgroundProbeGlobal: 0,
+  modelBreakerMinMs: 120000,
   modelBreakerThreshold: 3,
-  modelBreakerWindowMs: 3000,
+  modelBreakerWindowMs: 8000,
   autoFallback: 'same_family',
-  workerEnabled: true,
-  workerIntervalMs: 60000,
-  workerBatchAccounts: 20,
-  workerBatchModels: 4,
-  workerProbeMode: 'selective_model',
+  workerEnabled: false,
+  workerIntervalMs: 300000,
+  workerBatchAccounts: 10,
+  workerBatchModels: 0,
+  workerProbeMode: 'cheap_only',
   workerJitterMs: 5000,
   workerMaxRuntimeMs: 30000,
-  hotPoolMinPerModel: 5,
+  hotPoolMinPerModel: 0,
   hotPoolMaxPerModel: 30,
-  hotPoolFreshMs: 600000,
-  requestProbeEnabled: true,
+  hotPoolFreshMs: 7200000,
+  requestProbeEnabled: false,
   requestProbeConcurrency: 3,
   requestProbeBudgetMs: 2000,
-  fastSwitchMaxAttempts: 2,
-  fastSwitchBudgetMs: 3000,
+  fastSwitchMaxAttempts: 9,
+  fastSwitchBudgetMs: 8000,
   accountScoreFailurePenaltyMs: 300000,
   trackedModelPatterns: [
     'claude-4.5-haiku',
@@ -80,7 +80,7 @@ function normalizePatternList(value) {
 export function getAvailabilityConfig() {
   const runtime = getAvailabilityRuntimeConfig();
   return {
-    mode: runtime.mode || envString('WINDSURFAPI_AVAILABILITY_MODE', DEFAULTS.mode, ['off', 'conservative', 'aggressive']),
+    mode: runtime.mode || envString('WINDSURFAPI_AVAILABILITY_MODE', DEFAULTS.mode, ['off', 'passive_strong', 'conservative', 'aggressive']),
     probeConcurrencyPerModel: Number(runtime.probeConcurrencyPerModel ?? envInt('WINDSURFAPI_PROBE_CONCURRENCY_PER_MODEL', DEFAULTS.probeConcurrencyPerModel)),
     backgroundProbePerModel: Number(runtime.backgroundProbePerModel ?? envInt('WINDSURFAPI_BACKGROUND_PROBE_PER_MODEL', DEFAULTS.backgroundProbePerModel)),
     backgroundProbeGlobal: Number(runtime.backgroundProbeGlobal ?? envInt('WINDSURFAPI_BACKGROUND_PROBE_GLOBAL', DEFAULTS.backgroundProbeGlobal)),
@@ -613,15 +613,19 @@ export function getFallbackForModel(modelKey, requestMeta = {}) {
 
 export function getRouteAdvice(modelKey, requestMeta = {}) {
   const breaker = getModelBreaker(modelKey);
+  const healthyAccountIds = getPreferredHealthyAccountIds(modelKey, requestMeta?.accounts || []);
+  const hasHealthyAccounts = healthyAccountIds.length > 0;
   const fallbackModel = ['open', 'degraded'].includes(breaker.state)
     ? getFallbackForModel(modelKey, requestMeta)
     : null;
   return {
     modelKey,
     breaker,
+    healthyAccountIds,
+    hasHealthyAccounts,
     fallbackModel,
-    shouldFallback: !!fallbackModel && breaker.state === 'open',
-    shouldShortCircuit: breaker.state === 'open',
+    shouldFallback: !!fallbackModel && breaker.state === 'open' && !hasHealthyAccounts,
+    shouldShortCircuit: breaker.state === 'open' && !hasHealthyAccounts,
     retryAfterMs: breaker.until ? Math.max(1000, breaker.until - nowMs()) : breaker.retryAfterMs || 0,
   };
 }

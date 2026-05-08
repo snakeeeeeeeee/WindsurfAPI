@@ -18,7 +18,8 @@ const {
   recordHealthyAccount,
   updateAvailabilityConfig,
 } = await import('../src/availability-router.js');
-const { runAvailabilityWorkerCycleForTest } = await import('../src/availability-worker.js');
+const { setDynamicProxyConfig } = await import('../src/dynamic-proxy.js');
+const { runAvailabilityWorkerCycleForTest, runAvailabilityWorkerOnce, stopAvailabilityWorker } = await import('../src/availability-worker.js');
 
 const originalCfg = {
   mode: 'aggressive',
@@ -79,6 +80,8 @@ function deps(overrides = {}) {
 
 afterEach(async () => {
   updateAvailabilityConfig(originalCfg);
+  setDynamicProxyConfig({ enabled: false, password: '' });
+  stopAvailabilityWorker();
   for (const a of accounts) {
     await clearAccountModelCooldown(a.id, '*');
     await clearAccountModelCooldown(a.id, 'claude-sonnet-4.6');
@@ -265,5 +268,24 @@ describe('availability-worker', () => {
       }),
     });
     assert.deepEqual(seen, ['acct-worker-2']);
+  });
+
+  it('does not get stuck if dynamic proxy maintenance fails while model probing is disabled', async () => {
+    updateAvailabilityConfig({ ...originalCfg, mode: 'passive_strong', workerEnabled: false });
+    setDynamicProxyConfig({ enabled: true, workerIntervalMs: 60000, workerBatchSize: 1, password: 'test' });
+
+    const badAccounts = {
+      map() {
+        throw new Error('bad_accounts');
+      },
+    };
+    const first = await runAvailabilityWorkerOnce('test_bad_accounts', { accounts: badAccounts });
+    assert.equal(first.success, false);
+    assert.match(first.error, /bad_accounts/);
+
+    const second = await runAvailabilityWorkerOnce('test_recovery', { accounts });
+    assert.equal(second.success, true);
+    assert.equal(second.skipped, true);
+    assert.equal(second.reason, 'availability_disabled_dynamic_proxy_maintained');
   });
 });

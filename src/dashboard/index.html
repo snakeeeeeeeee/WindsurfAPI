@@ -2047,7 +2047,7 @@ window._firebaseOAuth = async function(provider) {
     <div class="page-header">
       <div>
         <h1 class="page-title" data-i18n="page.availability">高可用</h1>
-        <div class="page-subtitle" data-i18n="pageSubtitle.availability">模型 breaker、账号模型 CD、健康账号池与调度参数</div>
+        <div class="page-subtitle" data-i18n="pageSubtitle.availability">被动换号、账号模型 CD 与动态代理自动换 IP</div>
       </div>
       <div class="btn-group">
         <button class="btn btn-outline" onclick="App.loadAvailability()">
@@ -2064,15 +2064,15 @@ window._firebaseOAuth = async function(provider) {
       <div class="section-header">
         <div>
           <div class="section-title">动态代理 IP</div>
-          <div class="section-desc">按账号绑定粘性动态 IP；配置保存到 SQLite，密码只保存在服务端</div>
+          <div class="section-desc">按账号绑定粘性动态 IP；启用后代理失败、过期、即将过期都会由后台自动换 IP</div>
         </div>
         <button class="btn btn-primary btn-sm" onclick="App.saveDynamicProxyConfig()">保存动态代理配置</button>
       </div>
       <div class="section-body">
         <div class="field-row">
-          <div class="field"><label class="field-label">启用动态代理</label><select id="dp-enabled" class="select"><option value="1">启用</option><option value="0">关闭</option></select></div>
+          <div class="field"><label class="field-label">动态代理</label><select id="dp-enabled" class="select"><option value="1">启用</option><option value="0">关闭</option></select></div>
           <div class="field"><label class="field-label">协议</label><select id="dp-protocol" class="select"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select></div>
-          <div class="field"><label class="field-label">主机</label><input id="dp-host" class="input" placeholder="us.novproxy.io"></div>
+          <div class="field"><label class="field-label">入口主机</label><input id="dp-host" class="input" placeholder="us.novproxy.io"></div>
           <div class="field"><label class="field-label">端口</label><input id="dp-port" class="input" type="number" min="1" max="65535"></div>
         </div>
         <div class="field-row" style="margin-top:12px">
@@ -2084,119 +2084,68 @@ window._firebaseOAuth = async function(provider) {
           <div class="field"><label class="field-label">Region</label><input id="dp-region" class="input" placeholder="US"></div>
           <div class="field"><label class="field-label">State</label><input id="dp-state" class="input" placeholder="New Jersey"></div>
           <div class="field"><label class="field-label">TTL 分钟</label><input id="dp-ttl-minutes" class="input" type="number" min="1"></div>
-          <div class="field"><label class="field-label">提前续期 ms</label><input id="dp-renew-before-ms" class="input" type="number" min="0" step="1000"></div>
-        </div>
-        <div class="field-row" style="margin-top:12px">
-          <div class="field" style="grid-column:1 / span 2"><label class="field-label">验证地址</label><input id="dp-verify-url" class="input" placeholder="https://ipinfo.io/json"></div>
-          <div class="field"><label class="field-label">绑定重试次数</label><input id="dp-max-bind-retries" class="input" type="number" min="1" max="20"></div>
           <div class="field"><label class="field-label">Worker 间隔 ms</label><input id="dp-worker-interval-ms" class="input" type="number" min="1000" step="1000"></div>
         </div>
-        <div class="field-row" style="margin-top:12px">
-          <div class="field"><label class="field-label">Worker 批量账号数</label><input id="dp-worker-batch-size" class="input" type="number" min="0" max="1000"></div>
-          <div class="field"><label class="field-label">Worker 并发</label><input id="dp-worker-concurrency" class="input" type="number" min="1" max="100"></div>
-        </div>
+        <input id="dp-renew-before-ms" type="hidden">
+        <input id="dp-verify-url" type="hidden">
+        <input id="dp-max-bind-retries" type="hidden">
+        <input id="dp-worker-batch-size" type="hidden">
+        <input id="dp-worker-concurrency" type="hidden">
       </div>
     </div>
 
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title" data-i18n="availability.config.title">调度参数</div>
-          <div class="section-desc" data-i18n="availability.config.desc">保存后写入 SQLite 并立即生效</div>
+          <div class="section-title" data-i18n="availability.config.title">请求调度</div>
+          <div class="section-desc" data-i18n="availability.config.desc">默认使用被动强可用：真实请求失败后快速换号，不主动烧 Claude 模型探测额度</div>
         </div>
         <button class="btn btn-primary btn-sm" onclick="App.saveAvailabilityConfig()" data-i18n="action.save">保存</button>
       </div>
       <div class="section-body">
         <div class="field-row">
-          <div class="field"><label class="field-label">mode</label><select id="av-mode" class="select"><option value="aggressive">aggressive</option><option value="conservative">conservative</option><option value="off">off</option></select></div>
-          <div class="field"><label class="field-label">自动降级</label><select id="av-auto-fallback" class="select"><option value="same_family">same_family</option><option value="off">off</option></select></div>
-          <div class="field"><label class="field-label">单模型探测账号数</label><input id="av-probe-concurrency" class="input" type="number" min="1" max="20"></div>
-          <div class="field"><label class="field-label">后台单模型并发</label><input id="av-bg-per-model" class="input" type="number" min="0" max="20"></div>
+          <div class="field"><label class="field-label">调度模式</label><select id="av-mode" class="select"><option value="passive_strong">被动强可用</option><option value="conservative">保守</option><option value="off">关闭</option></select></div>
+          <div class="field"><label class="field-label">同系列降级</label><select id="av-auto-fallback" class="select"><option value="same_family">开启</option><option value="off">关闭</option></select></div>
+          <div class="field"><label class="field-label">最多换号次数</label><input id="av-fast-switch-attempts" class="input" type="number" min="0" max="20"></div>
+          <div class="field"><label class="field-label">换号总预算 ms</label><input id="av-fast-switch-budget-ms" class="input" type="number" min="500" step="100"></div>
         </div>
-        <div class="field-row" style="margin-top:12px">
-          <div class="field"><label class="field-label">后台全局并发</label><input id="av-bg-global" class="input" type="number" min="0" max="100"></div>
-          <div class="field"><label class="field-label">Breaker 触发次数</label><input id="av-threshold" class="input" type="number" min="1" max="50"></div>
-          <div class="field"><label class="field-label">Breaker 窗口毫秒</label><input id="av-window-ms" class="input" type="number" min="1000" step="1000"></div>
-          <div class="field"><label class="field-label">Breaker 最小冷却毫秒</label><input id="av-min-ms" class="input" type="number" min="1000" step="1000"></div>
-        </div>
-        <div class="field-row" style="margin-top:12px">
-          <div class="field"><label class="field-label">热池最小账号数</label><input id="av-hot-min" class="input" type="number" min="0" max="100"></div>
-          <div class="field"><label class="field-label">热池最大记录数</label><input id="av-hot-max" class="input" type="number" min="1" max="500"></div>
-          <div class="field"><label class="field-label">热池新鲜期 ms</label><input id="av-hot-fresh-ms" class="input" type="number" min="1000" step="1000"></div>
-          <div class="field"><label class="field-label">失败惩罚窗口 ms</label><input id="av-score-penalty-ms" class="input" type="number" min="1000" step="1000"></div>
-        </div>
-        <div class="field-row" style="margin-top:12px">
-          <div class="field"><label class="field-label">请求冷启动探测</label><select id="av-request-probe-enabled" class="select"><option value="1">启用</option><option value="0">关闭</option></select></div>
-          <div class="field"><label class="field-label">请求探测并发</label><input id="av-request-probe-concurrency" class="input" type="number" min="1" max="20"></div>
-          <div class="field"><label class="field-label">请求探测预算 ms</label><input id="av-request-probe-budget-ms" class="input" type="number" min="500" step="100"></div>
-          <div class="field"><label class="field-label">快速换号预算 ms</label><input id="av-fast-switch-budget-ms" class="input" type="number" min="500" step="100"></div>
-        </div>
-        <div class="field-row" style="margin-top:12px">
-          <div class="field"><label class="field-label">快速换号次数</label><input id="av-fast-switch-attempts" class="input" type="number" min="0" max="20"></div>
-        </div>
-        <div class="field-row" style="margin-top:12px">
-          <div class="field" style="grid-column:1 / -1">
-            <label class="field-label">关注模型规则</label>
-            <textarea id="av-tracked-model-patterns" class="textarea" rows="4" spellcheck="false" placeholder="claude-sonnet-4.6*&#10;claude-opus-4-7*"></textarea>
-            <div class="field-hint">模型状态和手动探测默认只展示/操作这些模型；支持每行一个规则、逗号分隔和 * 通配。已有 CD/breaker/健康池的异常模型仍会显示。</div>
-          </div>
-        </div>
+        <input id="av-probe-concurrency" type="hidden">
+        <input id="av-bg-per-model" type="hidden">
+        <input id="av-bg-global" type="hidden">
+        <input id="av-threshold" type="hidden">
+        <input id="av-window-ms" type="hidden">
+        <input id="av-min-ms" type="hidden">
+        <input id="av-hot-min" type="hidden">
+        <input id="av-hot-max" type="hidden">
+        <input id="av-hot-fresh-ms" type="hidden">
+        <input id="av-score-penalty-ms" type="hidden">
+        <input id="av-request-probe-enabled" type="hidden">
+        <input id="av-request-probe-concurrency" type="hidden">
+        <input id="av-request-probe-budget-ms" type="hidden">
+        <input id="av-worker-enabled" type="hidden">
+        <input id="av-worker-interval-ms" type="hidden">
+        <input id="av-worker-batch-accounts" type="hidden">
+        <input id="av-worker-batch-models" type="hidden">
+        <input id="av-worker-probe-mode" type="hidden">
+        <input id="av-worker-jitter-ms" type="hidden">
+        <input id="av-worker-max-runtime-ms" type="hidden">
+        <textarea id="av-tracked-model-patterns" style="display:none"></textarea>
       </div>
     </div>
 
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">主动探测 Worker</div>
-          <div class="section-desc">后台周期探测账号容量和关注模型可用性，减少用户请求首次踩冷却</div>
+          <div class="section-title">后台维护</div>
+          <div class="section-desc">只负责动态代理过期/失败自动换 IP；不主动探测 Claude 模型</div>
         </div>
         <div class="btn-group">
-          <button class="btn btn-primary btn-sm" onclick="App.saveAvailabilityConfig()">保存配置</button>
-          <button class="btn btn-outline btn-sm" onclick="App.runAvailabilityWorkerNow()">立即运行一轮</button>
+          <button class="btn btn-outline btn-sm" onclick="App.runAvailabilityWorkerNow()">立即维护</button>
           <button class="btn btn-outline btn-sm" onclick="App.loadAvailability()">刷新状态</button>
         </div>
       </div>
       <div class="section-body">
-        <div class="field-row">
-          <div class="field"><label class="field-label">启用主动探测 Worker</label><select id="av-worker-enabled" class="select"><option value="1">启用</option><option value="0">关闭</option></select></div>
-          <div class="field"><label class="field-label">探测间隔 ms</label><input id="av-worker-interval-ms" class="input" type="number" min="1000" step="1000"></div>
-          <div class="field"><label class="field-label">每轮账号数</label><input id="av-worker-batch-accounts" class="input" type="number" min="0" max="1000"></div>
-          <div class="field"><label class="field-label">每轮模型数</label><input id="av-worker-batch-models" class="input" type="number" min="0" max="100"></div>
-        </div>
-        <div class="field-row" style="margin-top:12px">
-          <div class="field"><label class="field-label">探测模式</label><select id="av-worker-probe-mode" class="select"><option value="cheap_only">cheap_only</option><option value="selective_model">selective_model</option><option value="aggressive_model">aggressive_model</option></select></div>
-          <div class="field"><label class="field-label">随机抖动 ms</label><input id="av-worker-jitter-ms" class="input" type="number" min="0" step="1000"></div>
-          <div class="field"><label class="field-label">单轮最大运行 ms</label><input id="av-worker-max-runtime-ms" class="input" type="number" min="5000" step="1000"></div>
-        </div>
-        <div class="metrics-grid" id="availability-worker-cards" style="margin-top:16px"></div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-header">
-        <div>
-          <div class="section-title" data-i18n="availability.models.title">模型状态</div>
-          <div class="section-desc" data-i18n="availability.models.desc">open/degraded 时会优先同系列 fallback 或返回 429</div>
-        </div>
-      </div>
-      <div class="section-body tight">
-        <div class="table-wrap"><table id="availability-models-table"><thead><tr>
-          <th>模型</th><th>别名</th><th>状态</th><th>事件</th><th>健康账号</th><th>降级目标</th><th>重试</th><th>最后成功</th><th>操作</th>
-        </tr></thead><tbody></tbody></table></div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-header">
-        <div>
-          <div class="section-title">模型热池</div>
-          <div class="section-desc">每个模型当前可直接路由的高分账号池，热池不足时 Worker 会优先补齐</div>
-        </div>
-      </div>
-      <div class="section-body tight">
-        <div class="table-wrap"><table id="availability-hotpool-table"><thead><tr>
-          <th>模型</th><th>目标</th><th>可用</th><th>新鲜</th><th>缺口</th><th>平均延迟</th><th>Top 账号</th>
-        </tr></thead><tbody></tbody></table></div>
+        <div class="metrics-grid" id="availability-worker-cards"></div>
       </div>
     </div>
 
@@ -2210,34 +2159,6 @@ window._firebaseOAuth = async function(provider) {
       <div class="section-body tight">
         <div class="table-wrap"><table id="availability-cooldowns-table"><thead><tr>
           <th>账号</th><th>模型</th><th>来源</th><th>冷却到</th><th>剩余</th><th>操作</th>
-        </tr></thead><tbody></tbody></table></div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-header">
-        <div>
-          <div class="section-title" data-i18n="availability.health.title">健康账号池</div>
-          <div class="section-desc" data-i18n="availability.health.desc">最近成功账号会优先参与同模型调度</div>
-        </div>
-      </div>
-      <div class="section-body tight">
-        <div class="table-wrap"><table id="availability-health-table"><thead><tr>
-          <th>模型</th><th>账号</th><th>分数</th><th>延迟</th><th>成功/失败</th><th>最后成功</th><th>最后错误</th><th>操作</th>
-        </tr></thead><tbody></tbody></table></div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-header">
-        <div>
-          <div class="section-title" data-i18n="availability.fallback.title">Fallback 规则</div>
-          <div class="section-desc" data-i18n="availability.fallback.desc">只展示当前可用的同系列降级路径</div>
-        </div>
-      </div>
-      <div class="section-body tight">
-        <div class="table-wrap"><table id="availability-fallback-table"><thead><tr>
-          <th>原模型</th><th>降级到</th><th>供应商</th>
         </tr></thead><tbody></tbody></table></div>
       </div>
     </div>
@@ -4362,7 +4283,7 @@ docker compose up -d --force-recreate</pre>
         <td class="text-xs nowrap">${h.lastSuccessAt ? new Date(h.lastSuccessAt).toLocaleString() : '-'}</td>
         <td class="text-xs">${this.esc(h.lastError || '-')}</td>
       </tr>
-    `).join('') || '<tr class="empty-row"><td colspan="6">暂无健康池记录</td></tr>';
+    `).join('') || '<tr class="empty-row"><td colspan="6">暂无最近成功记录</td></tr>';
     const html = `
       <div class="modal-body">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;padding:8px 10px;background:var(--surface-2);border-radius:6px">
@@ -4374,7 +4295,7 @@ docker compose up -d --force-recreate</pre>
         </div>
         <div class="section-title" style="font-size:13px;margin-bottom:8px">账号模型 CD</div>
         <div class="table-wrap" style="max-height:220px"><table><thead><tr><th>模型</th><th>来源</th><th>剩余</th><th>冷却到</th></tr></thead><tbody>${cooldownRows}</tbody></table></div>
-        <div class="section-title" style="font-size:13px;margin:14px 0 8px">健康账号池记录</div>
+        <div class="section-title" style="font-size:13px;margin:14px 0 8px">最近成功记录</div>
         <div class="table-wrap" style="max-height:260px"><table><thead><tr><th>模型</th><th>分数</th><th>延迟</th><th>成功/失败</th><th>最后成功</th><th>最后错误</th></tr></thead><tbody>${healthRows}</tbody></table></div>
       </div>`;
     this.confirm('账号可用性详情', html, { html: true, wide: true, okText: '关闭', cancelText: '关闭' });
@@ -6515,12 +6436,6 @@ docker compose up -d --force-recreate</pre>
     return `${h}h ${m % 60}m`;
   },
 
-  avBadge(state) {
-    const kind = state === 'closed' ? 'success' : state === 'open' ? 'error' : state === 'degraded' ? 'warn' : 'info';
-    const labelMap = { closed: '正常', open: '打开', degraded: '降级', half_open: '半开' };
-    return `<span class="badge ${kind}">${this.esc(labelMap[state] || state || '未知')}</span>`;
-  },
-
   bindAvailabilityConfigDirtyListeners() {
     if (this._availabilityConfigListenersBound) return;
     this._availabilityConfigListenersBound = true;
@@ -6560,28 +6475,28 @@ docker compose up -d --force-recreate</pre>
 
   setAvConfigForm(cfg = {}) {
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
-    set('av-mode', cfg.mode || 'aggressive');
+    set('av-mode', cfg.mode || 'passive_strong');
     set('av-auto-fallback', cfg.autoFallback || 'same_family');
     set('av-probe-concurrency', cfg.probeConcurrencyPerModel ?? 3);
-    set('av-bg-per-model', cfg.backgroundProbePerModel ?? 2);
-    set('av-bg-global', cfg.backgroundProbeGlobal ?? 5);
+    set('av-bg-per-model', cfg.backgroundProbePerModel ?? 0);
+    set('av-bg-global', cfg.backgroundProbeGlobal ?? 0);
     set('av-threshold', cfg.modelBreakerThreshold ?? 3);
-    set('av-window-ms', cfg.modelBreakerWindowMs ?? 3000);
-    set('av-min-ms', cfg.modelBreakerMinMs ?? 60000);
-    set('av-hot-min', cfg.hotPoolMinPerModel ?? 5);
+    set('av-window-ms', cfg.modelBreakerWindowMs ?? 8000);
+    set('av-min-ms', cfg.modelBreakerMinMs ?? 120000);
+    set('av-hot-min', cfg.hotPoolMinPerModel ?? 0);
     set('av-hot-max', cfg.hotPoolMaxPerModel ?? 30);
-    set('av-hot-fresh-ms', cfg.hotPoolFreshMs ?? 600000);
+    set('av-hot-fresh-ms', cfg.hotPoolFreshMs ?? 7200000);
     set('av-score-penalty-ms', cfg.accountScoreFailurePenaltyMs ?? 300000);
-    set('av-request-probe-enabled', cfg.requestProbeEnabled === false ? '0' : '1');
+    set('av-request-probe-enabled', cfg.requestProbeEnabled === true ? '1' : '0');
     set('av-request-probe-concurrency', cfg.requestProbeConcurrency ?? 3);
     set('av-request-probe-budget-ms', cfg.requestProbeBudgetMs ?? 2000);
-    set('av-fast-switch-budget-ms', cfg.fastSwitchBudgetMs ?? 3000);
-    set('av-fast-switch-attempts', cfg.fastSwitchMaxAttempts ?? 2);
-    set('av-worker-enabled', cfg.workerEnabled === false ? '0' : '1');
-    set('av-worker-interval-ms', cfg.workerIntervalMs ?? 60000);
-    set('av-worker-batch-accounts', cfg.workerBatchAccounts ?? 20);
-    set('av-worker-batch-models', cfg.workerBatchModels ?? 4);
-    set('av-worker-probe-mode', cfg.workerProbeMode || 'selective_model');
+    set('av-fast-switch-budget-ms', cfg.fastSwitchBudgetMs ?? 8000);
+    set('av-fast-switch-attempts', cfg.fastSwitchMaxAttempts ?? 9);
+    set('av-worker-enabled', cfg.workerEnabled === true ? '1' : '0');
+    set('av-worker-interval-ms', cfg.workerIntervalMs ?? 300000);
+    set('av-worker-batch-accounts', cfg.workerBatchAccounts ?? 10);
+    set('av-worker-batch-models', cfg.workerBatchModels ?? 0);
+    set('av-worker-probe-mode', cfg.workerProbeMode || 'cheap_only');
     set('av-worker-jitter-ms', cfg.workerJitterMs ?? 5000);
     set('av-worker-max-runtime-ms', cfg.workerMaxRuntimeMs ?? 30000);
     set('av-tracked-model-patterns', cfg.trackedModelPatterns || [
@@ -6599,30 +6514,30 @@ docker compose up -d --force-recreate</pre>
   getAvConfigForm() {
     const num = (id) => Number(document.getElementById(id)?.value || 0);
     return {
-      mode: document.getElementById('av-mode')?.value || 'aggressive',
+      mode: document.getElementById('av-mode')?.value || 'passive_strong',
       autoFallback: document.getElementById('av-auto-fallback')?.value || 'same_family',
-      probeConcurrencyPerModel: num('av-probe-concurrency'),
-      backgroundProbePerModel: num('av-bg-per-model'),
-      backgroundProbeGlobal: num('av-bg-global'),
-      modelBreakerThreshold: num('av-threshold'),
-      modelBreakerWindowMs: num('av-window-ms'),
-      modelBreakerMinMs: num('av-min-ms'),
-      hotPoolMinPerModel: num('av-hot-min'),
-      hotPoolMaxPerModel: num('av-hot-max'),
-      hotPoolFreshMs: num('av-hot-fresh-ms'),
-      accountScoreFailurePenaltyMs: num('av-score-penalty-ms'),
-      requestProbeEnabled: document.getElementById('av-request-probe-enabled')?.value !== '0',
-      requestProbeConcurrency: num('av-request-probe-concurrency'),
-      requestProbeBudgetMs: num('av-request-probe-budget-ms'),
+      probeConcurrencyPerModel: num('av-probe-concurrency') || 3,
+      backgroundProbePerModel: 0,
+      backgroundProbeGlobal: 0,
+      modelBreakerThreshold: num('av-threshold') || 3,
+      modelBreakerWindowMs: num('av-window-ms') || 8000,
+      modelBreakerMinMs: num('av-min-ms') || 120000,
+      hotPoolMinPerModel: 0,
+      hotPoolMaxPerModel: num('av-hot-max') || 30,
+      hotPoolFreshMs: num('av-hot-fresh-ms') || 7200000,
+      accountScoreFailurePenaltyMs: num('av-score-penalty-ms') || 300000,
+      requestProbeEnabled: false,
+      requestProbeConcurrency: num('av-request-probe-concurrency') || 3,
+      requestProbeBudgetMs: num('av-request-probe-budget-ms') || 2000,
       fastSwitchBudgetMs: num('av-fast-switch-budget-ms'),
       fastSwitchMaxAttempts: num('av-fast-switch-attempts'),
-      workerEnabled: document.getElementById('av-worker-enabled')?.value !== '0',
-      workerIntervalMs: num('av-worker-interval-ms'),
-      workerBatchAccounts: num('av-worker-batch-accounts'),
-      workerBatchModels: num('av-worker-batch-models'),
-      workerProbeMode: document.getElementById('av-worker-probe-mode')?.value || 'selective_model',
-      workerJitterMs: num('av-worker-jitter-ms'),
-      workerMaxRuntimeMs: num('av-worker-max-runtime-ms'),
+      workerEnabled: false,
+      workerIntervalMs: num('av-worker-interval-ms') || 300000,
+      workerBatchAccounts: num('av-worker-batch-accounts') || 10,
+      workerBatchModels: 0,
+      workerProbeMode: 'cheap_only',
+      workerJitterMs: num('av-worker-jitter-ms') || 5000,
+      workerMaxRuntimeMs: num('av-worker-max-runtime-ms') || 30000,
       trackedModelPatterns: document.getElementById('av-tracked-model-patterns')?.value || '',
     };
   },
@@ -6639,10 +6554,8 @@ docker compose up -d --force-recreate</pre>
     const cards = document.getElementById('availability-cards');
     if (cards) cards.innerHTML = `
       <div class="card ${redisKind}"><div class="card-header"><div class="card-title">共享状态</div></div><div class="card-value" style="font-size:20px">${this.esc(shared.mode || 'memory')}</div><div class="card-sub">${this.esc(shared.lastError || (shared.redisUrlConfigured ? 'Redis 已配置' : 'Redis 未启用'))}</div></div>
-      <div class="card ${cfg.mode === 'off' ? 'warn' : 'info'}"><div class="card-header"><div class="card-title">调度模式</div></div><div class="card-value" style="font-size:20px">${this.esc(cfg.mode || '-')}</div><div class="card-sub">自动降级=${this.esc(cfg.autoFallback || '-')}</div></div>
-      <div class="card ${summary.openOrDegradedModels ? 'warn' : 'success'}"><div class="card-header"><div class="card-title">异常模型</div></div><div class="card-value">${summary.openOrDegradedModels || 0}</div><div class="card-sub">${summary.trackedModelCount || summary.modelCount || 0} 个关注 / ${summary.modelCount || 0} 个可见</div></div>
-      <div class="card ${summary.accountModelCooldowns ? 'warn' : 'success'}"><div class="card-header"><div class="card-title">账号模型 CD</div></div><div class="card-value">${summary.accountModelCooldowns || 0}</div><div class="card-sub">${summary.healthyAccounts || 0} 条健康账号记录</div></div>
-      <div class="card ${(summary.hotPoolFillRate || 0) >= 1 ? 'success' : 'warn'}"><div class="card-header"><div class="card-title">热池填充率</div></div><div class="card-value">${Math.round((summary.hotPoolFillRate || 0) * 100)}%</div><div class="card-sub">${summary.hotPoolFresh || 0}/${summary.hotPoolTarget || 0} 个新鲜热账号</div></div>
+      <div class="card ${cfg.mode === 'off' ? 'warn' : 'info'}"><div class="card-header"><div class="card-title">调度模式</div></div><div class="card-value" style="font-size:20px">${this.esc(cfg.mode === 'passive_strong' ? '被动强可用' : cfg.mode || '-')}</div><div class="card-sub">最多换号 ${cfg.fastSwitchMaxAttempts ?? 0} 次；同系列降级=${cfg.autoFallback === 'same_family' ? '开' : '关'}</div></div>
+      <div class="card ${summary.accountModelCooldowns ? 'warn' : 'success'}"><div class="card-header"><div class="card-title">账号模型 CD</div></div><div class="card-value">${summary.accountModelCooldowns || 0}</div><div class="card-sub">冷却中的账号/模型会被自动跳过</div></div>
     `;
 
     const dyn = d.dynamicProxy || {};
@@ -6651,62 +6564,16 @@ docker compose up -d --force-recreate</pre>
     `;
 
     const worker = d.worker || {};
-    const wc = worker.counts || {};
     const workerCards = document.getElementById('availability-worker-cards');
-    if (workerCards) workerCards.innerHTML = `
-      <div class="card ${worker.enabled ? (worker.running ? 'info' : 'success') : 'warn'}"><div class="card-header"><div class="card-title">运行状态</div></div><div class="card-value" style="font-size:20px">${worker.running ? '运行中' : worker.enabled ? '已启用' : '已关闭'}</div><div class="card-sub">上次原因=${this.esc(worker.lastReason || '-')}</div></div>
-      <div class="card ${worker.lastLockAcquired ? 'success' : worker.lastRunAt ? 'warn' : 'info'}"><div class="card-header"><div class="card-title">Redis Lock</div></div><div class="card-value" style="font-size:20px">${worker.lastLockAcquired ? '已拿到' : '未拿到'}</div><div class="card-sub">${worker.lastError ? this.esc(worker.lastError) : '多实例 singleflight'}</div></div>
-      <div class="card info"><div class="card-header"><div class="card-title">上轮探测</div></div><div class="card-value" style="font-size:20px">${wc.accountsChecked || 0} 账号 / ${wc.modelsChecked || 0} 模型</div><div class="card-sub">成功 ${wc.success || 0}，限流 ${wc.rateLimited || 0}，失败 ${wc.failed || 0}，跳过 ${wc.skipped || 0}</div></div>
-      <div class="card ${wc.hotPoolDeficit ? 'warn' : 'success'}"><div class="card-header"><div class="card-title">热池缺口</div></div><div class="card-value" style="font-size:20px">${wc.hotPoolDeficit || 0}</div><div class="card-sub">下轮优先：${this.esc((worker.nextPriorityModels || []).slice(0, 3).join(', ') || '-')}</div></div>
-      <div class="card info"><div class="card-header"><div class="card-title">时间</div></div><div class="card-value" style="font-size:20px">${worker.lastDurationMs ? this.fmtMsDuration(worker.lastDurationMs) : '-'}</div><div class="card-sub">上次 ${worker.lastRunAt ? new Date(worker.lastRunAt).toLocaleString() : '-'}；下次 ${worker.nextRunAt ? new Date(worker.nextRunAt).toLocaleTimeString() : '-'}</div></div>
-    `;
-
     if (workerCards && worker.dynamicProxy) {
       const dp = worker.dynamicProxy;
-      workerCards.innerHTML += `
-        <div class="card ${dp.failedCount ? 'warn' : dp.enabled ? 'success' : 'info'}"><div class="card-header"><div class="card-title">动态 IP Worker</div></div><div class="card-value" style="font-size:20px">${dp.checked || 0} 检查 / ${dp.rebound || 0} 换绑</div><div class="card-sub">${dp.enabled ? '已启用' : '已关闭'}；失败 ${dp.failedCount || 0}${dp.lastError ? '：' + this.esc(dp.lastError) : ''}</div></div>
+      workerCards.innerHTML = `
+        <div class="card ${dp.enabled ? 'success' : 'info'}"><div class="card-header"><div class="card-title">动态 IP Worker</div></div><div class="card-value" style="font-size:20px">${dp.enabled ? '已启用' : '已关闭'}</div><div class="card-sub">上次原因=${this.esc(worker.lastReason || '-')}</div></div>
+        <div class="card info"><div class="card-header"><div class="card-title">上次维护</div></div><div class="card-value" style="font-size:20px">${dp.checked || 0} 检查 / ${dp.rebound || 0} 换绑</div><div class="card-sub">上次 ${worker.lastRunAt ? new Date(worker.lastRunAt).toLocaleString() : '-'}；下次 ${worker.nextRunAt ? new Date(worker.nextRunAt).toLocaleTimeString() : '-'}</div></div>
+        <div class="card ${dp.failedCount ? 'warn' : 'success'}"><div class="card-header"><div class="card-title">维护失败</div></div><div class="card-value" style="font-size:20px">${dp.failedCount || 0}</div><div class="card-sub">${dp.lastError ? this.esc(dp.lastError) : '无最近错误'}</div></div>
       `;
-    }
-
-    const modelsBody = document.querySelector('#availability-models-table tbody');
-    if (modelsBody) {
-      const rows = (d.modelBreakers || []).filter(m => m.tracked || m.state !== 'closed' || m.eventCount || m.healthyAccounts || m.fallbackTarget).slice(0, 200);
-      modelsBody.innerHTML = rows.map(m => `
-        <tr>
-          <td><code>${this.esc(m.modelKey)}</code></td>
-          <td class="text-xs">${this.esc((m.publicAliases || []).join(', ') || '-')}</td>
-          <td>${this.avBadge(m.state)} <span class="text-xs text-muted">${this.esc(m.reason || '')}</span></td>
-          <td>${m.eventCount || 0}</td>
-          <td>${m.hotPoolFresh || 0}/${m.hotPoolTarget || 0} <span class="text-xs text-muted">(${m.healthyAccounts || 0})</span></td>
-          <td>${m.fallbackTarget ? `<code>${this.esc(m.fallbackTarget)}</code>` : '-'}</td>
-          <td>${m.retryAfterMs ? this.fmtMsDuration(m.retryAfterMs) : '-'}</td>
-          <td class="text-xs nowrap">${m.lastSuccessAt ? new Date(m.lastSuccessAt).toLocaleString() : '-'}</td>
-          <td class="nowrap"><div class="btn-group">
-            <button class="btn btn-ghost btn-xs" onclick="App.probeAvailabilityModel('${this.escJsAttr(m.modelKey)}')">探测</button>
-            <button class="btn btn-ghost btn-xs" onclick="App.clearAvailabilityBreaker('${this.escJsAttr(m.modelKey)}')">清除</button>
-            <button class="btn btn-ghost btn-xs" onclick="App.setAvailabilityBreaker('${this.escJsAttr(m.modelKey)}','open')">打开</button>
-            <button class="btn btn-ghost btn-xs" onclick="App.setAvailabilityBreaker('${this.escJsAttr(m.modelKey)}','degraded')">降级</button>
-          </div></td>
-        </tr>
-      `).join('') || `<tr class="empty-row"><td colspan="9">${I18n.t('table.empty.noData')}</td></tr>`;
-    }
-
-    const hotBody = document.querySelector('#availability-hotpool-table tbody');
-    if (hotBody) {
-      hotBody.innerHTML = (d.hotPools || []).map(p => {
-        const top = (p.topAccounts || []).slice(0, 3).map(a => `${this.esc(a.email || a.accountId)} <span class="text-xs text-muted">#${a.score}</span>`).join('<br>');
-        return `
-          <tr>
-            <td><code>${this.esc(p.modelKey)}</code></td>
-            <td>${p.target || 0}</td>
-            <td>${p.ready || 0}</td>
-            <td>${p.fresh || 0}</td>
-            <td>${p.deficit ? `<span class="badge warn">${p.deficit}</span>` : '<span class="badge success">0</span>'}</td>
-            <td>${p.avgLatencyMs ? this.fmtMsDuration(p.avgLatencyMs) : '-'}</td>
-            <td>${top || '-'}</td>
-          </tr>
-        `;
-      }).join('') || `<tr class="empty-row"><td colspan="7">${I18n.t('table.empty.noData')}</td></tr>`;
+    } else if (workerCards) {
+      workerCards.innerHTML = `<div class="card info"><div class="card-header"><div class="card-title">动态 IP Worker</div></div><div class="card-value" style="font-size:20px">未启用</div><div class="card-sub">开启动态代理后自动维护</div></div>`;
     }
 
     const cdBody = document.querySelector('#availability-cooldowns-table tbody');
@@ -6718,35 +6585,9 @@ docker compose up -d --force-recreate</pre>
           <td>${this.esc(cd.source || '-')}</td>
           <td class="text-xs nowrap">${cd.until ? new Date(cd.until).toLocaleString() : '-'}</td>
           <td>${this.fmtMsDuration(cd.remainingMs)}</td>
-          <td class="nowrap"><div class="btn-group">
-            <button class="btn btn-ghost btn-xs" onclick="App.probeAvailabilityAccount('${this.escJsAttr(cd.accountId)}','${this.escJsAttr(cd.modelKey)}')">探测</button>
-            <button class="btn btn-ghost btn-xs" onclick="App.clearAvailabilityCooldown('${this.escJsAttr(cd.accountId)}','${this.escJsAttr(cd.modelKey)}')">清除</button>
-          </div></td>
+          <td><button class="btn btn-ghost btn-xs" onclick="App.clearAvailabilityCooldown('${this.escJsAttr(cd.accountId)}','${this.escJsAttr(cd.modelKey)}')">清除</button></td>
         </tr>
       `).join('') || `<tr class="empty-row"><td colspan="6">${I18n.t('table.empty.noData')}</td></tr>`;
-    }
-
-    const healthBody = document.querySelector('#availability-health-table tbody');
-    if (healthBody) {
-      healthBody.innerHTML = (d.healthyAccounts || []).slice(0, 200).map(h => `
-        <tr>
-          <td><code>${this.esc(h.modelKey)}</code></td>
-          <td><div>${this.esc(h.email || '-')}</div><code>${this.esc(h.accountId)}</code></td>
-          <td>${h.coolingDown ? '<span class="badge warn">CD</span>' : `<span class="badge ${h.score > 0 ? 'success' : 'warn'}">${h.score || 0}</span>`}</td>
-          <td>${h.avgLatencyMs ? this.fmtMsDuration(h.avgLatencyMs) : '-'}</td>
-          <td>${h.successCount || 0}/${h.failureCount || 0}</td>
-          <td class="text-xs nowrap">${h.lastSuccessAt ? new Date(h.lastSuccessAt).toLocaleString() : '-'}</td>
-          <td class="text-xs">${this.esc(h.lastError || '-')}</td>
-          <td><button class="btn btn-ghost btn-xs" onclick="App.removeAvailabilityHealth('${this.escJsAttr(h.modelKey)}','${this.escJsAttr(h.accountId)}')">移除</button></td>
-        </tr>
-      `).join('') || `<tr class="empty-row"><td colspan="8">${I18n.t('table.empty.noData')}</td></tr>`;
-    }
-
-    const fbBody = document.querySelector('#availability-fallback-table tbody');
-    if (fbBody) {
-      fbBody.innerHTML = (d.fallbackRules || []).map(f => `
-        <tr><td><code>${this.esc(f.modelKey)}</code></td><td><code>${this.esc(f.fallbackTarget)}</code></td><td>${this.esc(f.provider || '-')}</td></tr>
-      `).join('') || `<tr class="empty-row"><td colspan="3">${I18n.t('table.empty.noData')}</td></tr>`;
     }
     this.poll('availability', () => this.loadAvailability(), 8000);
   },
@@ -6759,9 +6600,9 @@ docker compose up -d --force-recreate</pre>
   },
 
   async runAvailabilityWorkerNow() {
-    this.toast('正在运行主动探测 Worker', 'info');
+    this.toast('正在运行后台维护', 'info');
     const r = await this.api('POST', '/availability/worker/run', {});
-    this.toast(r.success ? '主动探测完成' : (r.error || '主动探测失败'), r.success ? 'success' : 'error');
+    this.toast(r.success ? '后台维护完成' : (r.error || '后台维护失败'), r.success ? 'success' : 'error');
     this.loadAvailability();
   },
 
@@ -6775,43 +6616,10 @@ docker compose up -d --force-recreate</pre>
     this.loadAvailability();
   },
 
-  async probeAvailabilityModel(modelKey) {
-    this.toast(`正在探测 ${modelKey}`, 'info');
-    const r = await this.api('POST', `/availability/models/${encodeURIComponent(modelKey)}/probe`, {});
-    this.toast(r.success ? `探测通过 ${modelKey}` : (r.error || `探测失败 ${modelKey}`), r.success ? 'success' : 'error');
-    this.loadAvailability();
-  },
-
-  async clearAvailabilityBreaker(modelKey) {
-    const ok = await this.confirm('清除模型 breaker', modelKey, { okText: '清除' });
-    if (!ok) return;
-    await this.api('DELETE', `/availability/models/${encodeURIComponent(modelKey)}/breaker`);
-    this.loadAvailability();
-  },
-
-  async setAvailabilityBreaker(modelKey, state) {
-    const stateLabel = state === 'open' ? '打开' : state === 'degraded' ? '降级' : state;
-    const ok = await this.confirm(`设置为${stateLabel}`, modelKey, { okText: stateLabel });
-    if (!ok) return;
-    await this.api('POST', `/availability/models/${encodeURIComponent(modelKey)}/breaker`, { state, reason: 'manual_dashboard' });
-    this.loadAvailability();
-  },
-
   async clearAvailabilityCooldown(accountId, modelKey) {
     const ok = await this.confirm('清除账号模型 CD', `${accountId} / ${modelKey}`, { okText: '清除' });
     if (!ok) return;
     await this.api('DELETE', `/availability/accounts/${encodeURIComponent(accountId)}/models/${encodeURIComponent(modelKey)}/cooldown`);
-    this.loadAvailability();
-  },
-
-  async probeAvailabilityAccount(accountId, modelKey) {
-    const r = await this.api('POST', `/availability/accounts/${encodeURIComponent(accountId)}/models/${encodeURIComponent(modelKey)}/probe`, {});
-    this.toast(r.success ? '账号探测通过' : (r.error || '账号探测失败'), r.success ? 'success' : 'error');
-    this.loadAvailability();
-  },
-
-  async removeAvailabilityHealth(modelKey, accountId) {
-    await this.api('DELETE', `/availability/models/${encodeURIComponent(modelKey)}/health/${encodeURIComponent(accountId)}`);
     this.loadAvailability();
   },
 

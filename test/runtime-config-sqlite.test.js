@@ -30,6 +30,10 @@ async function loadRuntime() {
   return import(`../src/runtime-config.js?case=${moduleSuffix()}`);
 }
 
+async function loadDb() {
+  return import(`../src/db.js?case=${moduleSuffix()}`);
+}
+
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'wfapi-runtime-sqlite-'));
   savedEnv = {};
@@ -114,5 +118,69 @@ describe('runtime-config SQLite defaults', () => {
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, undefined);
     assert.equal(process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'runtime=target');
     assert.equal(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, undefined);
+  });
+
+  it('migrates only untouched legacy aggressive availability defaults to passive defaults', async () => {
+    const db = await loadDb();
+    db.setJson('runtime', 'config', {
+      availability: {
+        mode: 'aggressive',
+        probeConcurrencyPerModel: 3,
+        backgroundProbePerModel: 2,
+        backgroundProbeGlobal: 5,
+        modelBreakerMinMs: 60000,
+        modelBreakerThreshold: 3,
+        modelBreakerWindowMs: 3000,
+        autoFallback: 'same_family',
+        workerEnabled: true,
+        workerIntervalMs: 60000,
+        workerBatchAccounts: 20,
+        workerBatchModels: 4,
+        workerProbeMode: 'selective_model',
+        workerJitterMs: 5000,
+        workerMaxRuntimeMs: 30000,
+        hotPoolMinPerModel: 5,
+        hotPoolMaxPerModel: 30,
+        hotPoolFreshMs: 600000,
+        requestProbeEnabled: true,
+        requestProbeConcurrency: 3,
+        requestProbeBudgetMs: 2000,
+        fastSwitchMaxAttempts: 2,
+        fastSwitchBudgetMs: 3000,
+        accountScoreFailurePenaltyMs: 300000,
+      },
+    });
+
+    const runtime = await loadRuntime();
+    const av = runtime.getAvailabilityRuntimeConfig();
+    assert.equal(av.mode, 'passive_strong');
+    assert.equal(av.workerEnabled, false);
+    assert.equal(av.workerProbeMode, 'cheap_only');
+    assert.equal(av.requestProbeEnabled, false);
+    assert.equal(av.fastSwitchMaxAttempts, 9);
+  });
+
+  it('does not migrate intentionally customized aggressive availability config', async () => {
+    const db = await loadDb();
+    db.setJson('runtime', 'config', {
+      availability: {
+        mode: 'aggressive',
+        backgroundProbePerModel: 2,
+        backgroundProbeGlobal: 5,
+        workerEnabled: true,
+        workerBatchModels: 2,
+        workerProbeMode: 'selective_model',
+        hotPoolMinPerModel: 5,
+        requestProbeEnabled: true,
+        fastSwitchMaxAttempts: 4,
+        fastSwitchBudgetMs: 3000,
+      },
+    });
+
+    const runtime = await loadRuntime();
+    const av = runtime.getAvailabilityRuntimeConfig();
+    assert.equal(av.mode, 'aggressive');
+    assert.equal(av.workerEnabled, true);
+    assert.equal(av.fastSwitchMaxAttempts, 4);
   });
 });

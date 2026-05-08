@@ -1,23 +1,14 @@
 # Findings
 
-## Strong Availability Baseline
+## Git 历史结论
 
-- `availability-router.js` stores `model_health` as a recency-capped array and `getPreferredHealthyAccountIds()` returns simple recency order.
-- `auth.getApiKey()` already consults preferred healthy IDs before inflight/quota/RPM/LRU, so scoring can be introduced without changing the public account acquisition contract.
-- `availability-worker.js` currently rotates account batches and probes selected models sequentially until one success; it does not target a minimum hot-pool size per model.
-- Chat paths already record successful accounts and rate-limit events for stream and non-stream, but request cold-start probing and strict fast-switch budgets are not explicit yet.
-- Runtime availability config has a field allowlist in `setAvailabilityRuntimeConfig`; new Dashboard/env knobs must be added there or they silently fall back to defaults.
-- Existing Redis `model_health` can be upgraded in place to scored hot-pool entries because old rows only need `accountId`, `modelKey`, and `lastSuccessAt` to normalize.
+- `3e4bf2f` 已经修过“只试 3 个账号”的问题，改为大账号池最多尝试 10 个账号，避免前几个号限流时永远摸不到健康号。
+- 当前 `fastSwitchMaxAttempts=2` 会让实际尝试数重新变成 3，等于把历史问题用配置形式带回来了。
+- `e36cae3` 明确修过“Claude 主动探测烧 Trial quota”，历史经验是不应默认主动探测 Claude。
+- `225bba2` 修的是 queue timeout 诊断，不要求主动探测。
+- `c63bef5` 加 IP-rate-limit burst 短路是为了避免同 IP 下烧穿账号池；如果账号绑定不同动态代理 IP，这个短路应该保守化。
 
-## SQLite Persistence Baseline
+## 当前目标
 
-- `config.dataDir` is shared `/data` in Docker unless `REPLICA_ISOLATE=1`; compose mounts `./.docker-data/data:/data`.
-- JSON persistence is synchronous today, so a synchronous SQLite wrapper can minimize call-site churn.
-- Dockerfile uses `node:20-bookworm-slim`; Node 20 has no `node:sqlite`. Local Node 22.17.1 does have `node:sqlite`.
-- Existing tests can hang under full `npm test`; focused checks are required.
-
-- Account objects contain secrets and nested mutable state (`refreshToken`, `userStatus`, `capabilities`, `credits`, `blockedModels`), so SQLite phase 1 should persist an exact JSON snapshot and not normalize deeply.
-- `runtime-config.js`, `proxy-config.js`, `model-access.js`, and `stats.js` load at import time; `src/db.js` must avoid importing any of them to prevent cycles.
-
-- Tests that import runtime-config/dashboard modules need a temp `WINDSURFAPI_SQLITE_PATH` set before dynamic import, otherwise they create a repo-root `windsurfapi.sqlite`; updated affected focused tests accordingly.
-- Node emits `ExperimentalWarning` for `node:sqlite`; this is expected on the current Node 22 runtime.
+- 默认高可用策略应该是被动学习：真实成功写健康，真实限流写 CD，代理失败触发换 IP。
+- 动态代理 worker 必须独立于 availability worker；关闭模型探测时，代理自动续期/失败重绑仍要运行。

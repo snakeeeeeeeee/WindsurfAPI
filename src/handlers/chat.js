@@ -1524,6 +1524,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   }
   const routeAdvice = getRouteAdvice(routingModelKey, {
     requires1m: /(^|-)1m($|-)/i.test(String(routingModelKey || reqModel || '')),
+    accounts: getAccountList(),
   });
   if (routeAdvice.shouldShortCircuit) {
     const retryAfterMs = routeAdvice.retryAfterMs || 30000;
@@ -1961,9 +1962,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
   // first accounts rate-limited, healthy accounts were never reached
   // even though they would have worked (issue #5).
+  const activeAccountCount = getAccountList().filter(a => a.status === 'active').length;
   const maxAttempts = Math.min(
     10,
-    Math.max(3, getAccountList().filter(a => a.status === 'active').length),
+    Math.max(3, activeAccountCount),
     Math.max(1, fastSwitchMaxAttempts + 1),
   );
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -2160,7 +2162,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
         context.__rateLimitEvents.shift();
       }
       const sameModelBurst = context.__rateLimitEvents.filter(e => e.model === routingModelKey);
-      if (sameModelBurst.length >= RL_BURST_THRESHOLD) {
+      const dynamicProxyPool = !!acct.proxy?.dynamicBinding;
+      if (!dynamicProxyPool && sameModelBurst.length >= RL_BURST_THRESHOLD) {
         const maxCooldown = Math.max(...sameModelBurst.map(() => 30_000));
         const fb = getFallbackForModel(routingModelKey || displayModel) || pickRateLimitFallback(routingModelKey || displayModel);
         log.warn(`Chat[${reqId}]: IP-rate-limit burst detected — ${sameModelBurst.length} accounts rate-limited on ${displayModel} within ${RL_WINDOW_MS}ms. Short-circuiting.`);
@@ -2180,6 +2183,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
           err.body.error.fallback_reason = 'rate_limit_burst';
         }
         return err;
+      } else if (dynamicProxyPool && sameModelBurst.length >= RL_BURST_THRESHOLD) {
+        log.warn(`Chat[${reqId}]: rate-limit burst on ${displayModel}, but current account uses dynamic proxy; continuing passive account rotation.`);
       }
       log.warn(`Account ${acct.email} rate-limited on ${displayModel}, trying next account`);
       if (Date.now() - requestAttemptStartedAt >= fastSwitchBudgetMs || attempt >= fastSwitchMaxAttempts) {
@@ -2863,15 +2868,16 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       const fastSwitchBudgetMs = Math.max(1000, Number(getAvailabilityConfig().fastSwitchBudgetMs) || 3000);
       const fastSwitchMaxAttempts = Math.max(0, Number(getAvailabilityConfig().fastSwitchMaxAttempts) || 0);
       // Dynamic: try every active account in the pool (capped at 10) so a
-  // large pool with many rate-limited accounts can still fall through
-  // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
-  // first accounts rate-limited, healthy accounts were never reached
-  // even though they would have worked (issue #5).
-  const maxAttempts = Math.min(
-    10,
-    Math.max(3, getAccountList().filter(a => a.status === 'active').length),
-    Math.max(1, fastSwitchMaxAttempts + 1),
-  );
+      // large pool with many rate-limited accounts can still fall through
+      // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
+      // first accounts rate-limited, healthy accounts were never reached
+      // even though they would have worked (issue #5).
+      const activeAccountCount = getAccountList().filter(a => a.status === 'active').length;
+      const maxAttempts = Math.min(
+        10,
+        Math.max(3, activeAccountCount),
+        Math.max(1, fastSwitchMaxAttempts + 1),
+      );
 
       // Accumulate chunks so we can cache a successful response at the end.
       let accText = '';
@@ -3444,13 +3450,16 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 context.__rateLimitEvents.shift();
               }
               const sameModelBurst = context.__rateLimitEvents.filter(e => e.model === modelKey);
-              if (sameModelBurst.length >= RL_BURST_THRESHOLD) {
+              const dynamicProxyPool = !!acct?.proxy?.dynamicBinding;
+              if (!dynamicProxyPool && sameModelBurst.length >= RL_BURST_THRESHOLD) {
                 context.__rlAborted = true;
                 log.warn(`Chat[${reqId}] stream: IP-rate-limit burst — ${sameModelBurst.length} accounts rate-limited on ${model} within ${RL_WINDOW_MS}ms. Short-circuiting.`);
                 const cooldown = Math.max(...sameModelBurst.map(() => 30_000));
                 const fb = getFallbackForModel(modelKey || model) || pickRateLimitFallback(modelKey || model);
                 lastErr = Object.assign(new Error(`All accounts temporarily rate-limited on ${model}. Windsurf upstream is applying IP-level cooldown. Wait ~${Math.ceil(cooldown / 1000)}s before retrying.`), { type: 'rate_limit_exceeded', retry_after_ms: cooldown, fallback_model: fb || undefined, fallback_reason: fb ? 'rate_limit_burst' : undefined });
                 break;
+              } else if (dynamicProxyPool && sameModelBurst.length >= RL_BURST_THRESHOLD) {
+                log.warn(`Chat[${reqId}] stream: rate-limit burst on ${model}, but current account uses dynamic proxy; continuing passive account rotation.`);
               }
             }
             if (isInternal) { reportInternalError(currentApiKey); err.isModelError = true; err.kind ||= 'transient_stall'; }

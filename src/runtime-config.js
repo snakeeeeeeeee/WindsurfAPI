@@ -51,29 +51,29 @@ const DEFAULTS = {
   // defaults by src/availability-router.js; dashboard writes land here and
   // take effect without a container restart.
   availability: {
-    mode: 'aggressive',
+    mode: 'passive_strong',
     probeConcurrencyPerModel: 3,
-    backgroundProbePerModel: 2,
-    backgroundProbeGlobal: 5,
-    modelBreakerMinMs: 60000,
+    backgroundProbePerModel: 0,
+    backgroundProbeGlobal: 0,
+    modelBreakerMinMs: 120000,
     modelBreakerThreshold: 3,
-    modelBreakerWindowMs: 3000,
+    modelBreakerWindowMs: 8000,
     autoFallback: 'same_family',
-    workerEnabled: true,
-    workerIntervalMs: 60000,
-    workerBatchAccounts: 20,
-    workerBatchModels: 4,
-    workerProbeMode: 'selective_model',
+    workerEnabled: false,
+    workerIntervalMs: 300000,
+    workerBatchAccounts: 10,
+    workerBatchModels: 0,
+    workerProbeMode: 'cheap_only',
     workerJitterMs: 5000,
     workerMaxRuntimeMs: 30000,
-    hotPoolMinPerModel: 5,
+    hotPoolMinPerModel: 0,
     hotPoolMaxPerModel: 30,
-    hotPoolFreshMs: 600000,
-    requestProbeEnabled: true,
+    hotPoolFreshMs: 7200000,
+    requestProbeEnabled: false,
     requestProbeConcurrency: 3,
     requestProbeBudgetMs: 2000,
-    fastSwitchMaxAttempts: 2,
-    fastSwitchBudgetMs: 3000,
+    fastSwitchMaxAttempts: 9,
+    fastSwitchBudgetMs: 8000,
     accountScoreFailurePenaltyMs: 300000,
     trackedModelPatterns: [
       'claude-4.5-haiku',
@@ -194,7 +194,7 @@ function normalizePatternList(value) {
 function initialAvailabilityFromEnv() {
   const d = DEFAULTS.availability;
   return {
-    mode: envString('WINDSURFAPI_AVAILABILITY_MODE', d.mode, ['off', 'conservative', 'aggressive']),
+    mode: envString('WINDSURFAPI_AVAILABILITY_MODE', d.mode, ['off', 'passive_strong', 'conservative', 'aggressive']),
     probeConcurrencyPerModel: envInt('WINDSURFAPI_PROBE_CONCURRENCY_PER_MODEL', d.probeConcurrencyPerModel),
     backgroundProbePerModel: envInt('WINDSURFAPI_BACKGROUND_PROBE_PER_MODEL', d.backgroundProbePerModel),
     backgroundProbeGlobal: envInt('WINDSURFAPI_BACKGROUND_PROBE_GLOBAL', d.backgroundProbeGlobal),
@@ -254,6 +254,25 @@ function initialDynamicProxyFromEnv() {
   };
 }
 
+function migrateLegacyAvailabilityDefaults(rawState) {
+  const av = rawState?.availability;
+  if (!av || typeof av !== 'object') return rawState;
+  const looksLikeOldAggressiveDefault =
+    av.mode === 'aggressive'
+    && av.workerEnabled === true
+    && av.workerProbeMode === 'selective_model'
+    && av.requestProbeEnabled === true
+    && Number(av.fastSwitchMaxAttempts) === 2
+    && Number(av.fastSwitchBudgetMs) === 3000
+    && Number(av.backgroundProbePerModel) === 2
+    && Number(av.backgroundProbeGlobal) === 5
+    && Number(av.hotPoolMinPerModel) === 5
+    && Number(av.workerBatchModels) === 4;
+  if (!looksLikeOldAggressiveDefault) return rawState;
+  log.warn('runtime-config: migrated legacy aggressive availability defaults to passive_strong');
+  return { ...rawState, availability: { ...av, ...DEFAULTS.availability } };
+}
+
 function applyBusinessEnvConfig(envConfig, { authoritative = false } = {}) {
   if (!envConfig || typeof envConfig !== 'object') return;
   for (const key of BUSINESS_ENV_KEYS) {
@@ -281,6 +300,7 @@ function load() {
       return;
     }
     _rawState = raw && typeof raw === 'object' ? raw : {};
+    _rawState = migrateLegacyAvailabilityDefaults(_rawState);
     if (!hasOwn(_rawState, 'envConfig')) {
       const envConfig = initialBusinessEnvConfig();
       if (Object.keys(envConfig).length) _rawState = { ..._rawState, envConfig };
@@ -350,7 +370,7 @@ export function setAvailabilityRuntimeConfig(patch) {
       if (Number.isFinite(n) && n >= 0) next[k] = Math.round(n);
     } else if (k === 'mode') {
       const s = String(v || '').trim();
-      if (['off', 'conservative', 'aggressive'].includes(s)) next[k] = s;
+      if (['off', 'passive_strong', 'conservative', 'aggressive'].includes(s)) next[k] = s;
     } else if (k === 'autoFallback') {
       const s = String(v || '').trim();
       if (['off', 'same_family'].includes(s)) next[k] = s;

@@ -630,7 +630,12 @@ function scheduleNext() {
   const dpCfg = getDynamicProxyConfig();
   const availabilityBase = cfg.workerEnabled && cfg.mode !== 'off' ? Math.max(1000, cfg.workerIntervalMs || 60000) : Infinity;
   const dynamicBase = dpCfg.enabled ? Math.max(1000, dpCfg.workerIntervalMs || 60000) : Infinity;
-  const base = Math.min(availabilityBase, dynamicBase, 60000);
+  const base = Math.min(availabilityBase, dynamicBase);
+  if (!Number.isFinite(base)) {
+    status.nextRunAt = 0;
+    timer = null;
+    return;
+  }
   const jitter = Math.max(0, cfg.workerJitterMs || 0);
   const delay = base + (jitter ? Math.floor(Math.random() * jitter) : 0);
   status.nextRunAt = Date.now() + delay;
@@ -644,20 +649,38 @@ export async function runAvailabilityWorkerOnce(reason = 'manual', deps = {}) {
   if (runningPromise) return runningPromise;
   runningPromise = (async () => {
     const cfg = getAvailabilityConfig();
+    const dpCfg = getDynamicProxyConfig();
     const start = Date.now();
     let finalResult = null;
     status.enabled = !!cfg.workerEnabled && cfg.mode !== 'off';
-      if (!status.enabled) {
+    if (!status.enabled) {
+      status.running = !!dpCfg.enabled;
+      status.lastRunAt = start;
       status.lastReason = reason;
       status.lastError = '';
+      status.lastLockAcquired = false;
       status.counts = { ...freshCounts(), skipped: 1 };
       status.hotPools = [];
       status.nextPriorityModels = [];
-      status.dynamicProxy = await runDynamicProxyMaintenance(deps.accounts || authGetAccountList(), deps);
-      scheduleNext();
-      finalResult = { success: true, skipped: true, status: getAvailabilityWorkerStatus() };
-      recordWorkerRunHistory({ start, reason, result: finalResult, lockAcquired: false });
-      return finalResult;
+      try {
+        status.dynamicProxy = await runDynamicProxyMaintenance(deps.accounts || authGetAccountList(), deps);
+        status.running = false;
+        finalResult = { success: true, skipped: true, reason: dpCfg.enabled ? 'availability_disabled_dynamic_proxy_maintained' : 'disabled', status: getAvailabilityWorkerStatus() };
+        recordWorkerRunHistory({ start, reason, result: finalResult, lockAcquired: false });
+        return finalResult;
+      } catch (err) {
+        status.lastError = err.message || String(err);
+        log.warn(`availability-worker: dynamic proxy maintenance failed: ${status.lastError}`);
+        status.running = false;
+        finalResult = { success: false, skipped: true, error: status.lastError, status: getAvailabilityWorkerStatus() };
+        recordWorkerRunHistory({ start, reason, result: finalResult, lockAcquired: false });
+        return finalResult;
+      } finally {
+        status.running = false;
+        status.lastDurationMs = Date.now() - start;
+        scheduleNext();
+        runningPromise = null;
+      }
     }
     status.running = true;
     status.lastRunAt = start;
@@ -726,14 +749,15 @@ function recordWorkerRunHistory({ start, reason, result, lockAcquired }) {
 export function startAvailabilityWorker() {
   if (timer) return;
   const cfg = getAvailabilityConfig();
+  const dpCfg = getDynamicProxyConfig();
   status.enabled = !!cfg.workerEnabled && cfg.mode !== 'off';
   scheduleNext();
-  if (status.enabled) {
+  if (status.enabled || dpCfg.enabled) {
     setTimeout(() => {
       runAvailabilityWorkerOnce('startup').catch(e => log.warn(`availability-worker: startup run failed: ${e.message}`));
     }, 1500).unref?.();
   }
-  log.info(`availability-worker: started (enabled=${status.enabled}, mode=${cfg.workerProbeMode})`);
+  log.info(`availability-worker: started (availability=${status.enabled}, probeMode=${cfg.workerProbeMode}, dynamicProxy=${dpCfg.enabled})`);
 }
 
 export function stopAvailabilityWorker() {

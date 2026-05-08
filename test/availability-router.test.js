@@ -128,6 +128,25 @@ describe('availability-router', () => {
     assert.equal(advice.fallbackModel, 'claude-opus-4-7-medium');
   });
 
+  it('does not short-circuit an open breaker when a healthy account exists', async () => {
+    const modelKey = 'claude-opus-4-7-high';
+    touchedModels.add(modelKey);
+    updateAvailabilityConfig({ mode: 'aggressive', autoFallback: 'same_family' });
+    await recordHealthyAccount({ modelKey, accountId: 'acct-test', email: 'acct@example.com' });
+    await recordRateLimitEvent({ modelKey, accountId: 'a1', retryAfterMs: 1000 });
+    await recordRateLimitEvent({ modelKey, accountId: 'a2', retryAfterMs: 1000 });
+    await recordRateLimitEvent({ modelKey, accountId: 'a3', retryAfterMs: 1000 });
+
+    const advice = getRouteAdvice(modelKey, {
+      accounts: [{ id: 'acct-test', email: 'acct@example.com', status: 'active' }],
+    });
+    assert.equal(advice.breaker.state, 'open');
+    assert.equal(advice.hasHealthyAccounts, true);
+    assert.equal(advice.shouldFallback, false);
+    assert.equal(advice.shouldShortCircuit, false);
+    assert.equal(advice.fallbackModel, 'claude-opus-4-7-medium');
+  });
+
   it('does not downgrade 1m requests to a non-1m fallback target', async () => {
     const modelKey = 'claude-sonnet-4.6-1m';
     touchedModels.add(modelKey);

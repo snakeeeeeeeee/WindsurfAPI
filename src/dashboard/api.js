@@ -307,7 +307,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     });
   }
   if (subpath === '/availability/config' && method === 'PUT') {
-    return json(res, 200, { success: true, config: updateAvailabilityConfig(body || {}) });
+    const config = updateAvailabilityConfig(body || {});
+    runAvailabilityWorkerOnce('availability_config_saved').catch(e => log.warn(`availability-worker: config reschedule failed: ${e.message}`));
+    return json(res, 200, { success: true, config });
   }
   if (subpath === '/availability/prune' && method === 'POST') {
     const result = await pruneAvailabilityState({ accounts: getAccountList(), includeUntrackedModels: body?.includeUntrackedModels !== false, reason: 'manual_dashboard' });
@@ -403,7 +405,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   }
 
   if (subpath === '/dynamic-proxy/config' && method === 'PUT') {
-    return json(res, 200, { success: true, config: setDynamicProxyConfig(body || {}) });
+    const config = setDynamicProxyConfig(body || {});
+    runAvailabilityWorkerOnce('dynamic_proxy_config_saved').catch(e => log.warn(`dynamic-proxy-worker: config reschedule failed: ${e.message}`));
+    return json(res, 200, { success: true, config });
   }
 
   if (subpath === '/dynamic-proxy/bindings' && method === 'GET') {
