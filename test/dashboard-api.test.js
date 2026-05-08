@@ -12,6 +12,7 @@ process.env.WINDSURFAPI_DB_IMPORT_JSON_ON_EMPTY = '0';
 const { config } = await import('../src/config.js');
 const { configureBindHost } = await import('../src/auth.js');
 const { buildBatchProxyBinding, handleDashboardApi } = await import('../src/dashboard/api.js');
+const { getBusinessEnvConfig, setBusinessEnvConfig } = await import('../src/runtime-config.js');
 
 const originalDashboardPassword = config.dashboardPassword;
 const originalApiKey = config.apiKey;
@@ -20,6 +21,14 @@ afterEach(() => {
   config.dashboardPassword = originalDashboardPassword;
   config.apiKey = originalApiKey;
   configureBindHost('0.0.0.0');
+  setBusinessEnvConfig({
+    WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS: '',
+    WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS: '',
+    CASCADE_REUSE_HASH_SYSTEM: '',
+  });
+  delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+  delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+  delete process.env.CASCADE_REUSE_HASH_SYSTEM;
 });
 
 function fakeRes() {
@@ -80,5 +89,42 @@ describe('dashboard batch import proxy binding', () => {
     await handleDashboardApi('GET', '/cache', {}, { headers: { 'x-dashboard-password': 'dash-secret' } }, res);
 
     assert.equal(res.statusCode, 200);
+  });
+
+  it('persists and clears runtime env overrides through /settings/env', async () => {
+    config.dashboardPassword = '';
+    config.apiKey = '';
+    configureBindHost('127.0.0.1');
+
+    const save = fakeRes();
+    await handleDashboardApi('PUT', '/settings/env', {
+      env: {
+        WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS: '1',
+        WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS: 'upstream',
+        CASCADE_REUSE_HASH_SYSTEM: '0',
+      },
+    }, { headers: {} }, save);
+
+    assert.equal(save.statusCode, 200);
+    assert.equal(save.json().env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS, '1');
+    assert.equal(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS, '1');
+    assert.equal(getBusinessEnvConfig().CASCADE_REUSE_HASH_SYSTEM, '0');
+
+    const clear = fakeRes();
+    await handleDashboardApi('PUT', '/settings/env', {
+      env: {
+        WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS: '',
+      },
+    }, { headers: {} }, clear);
+
+    assert.equal(clear.statusCode, 200);
+    assert.equal(clear.json().env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS, undefined);
+    assert.equal(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS, undefined);
+
+    const read = fakeRes();
+    await handleDashboardApi('GET', '/settings/env', {}, { headers: {} }, read);
+    assert.equal(read.statusCode, 200);
+    assert.equal(read.json().env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, 'upstream');
+    assert.equal(read.json().env.CASCADE_REUSE_HASH_SYSTEM, '0');
   });
 });

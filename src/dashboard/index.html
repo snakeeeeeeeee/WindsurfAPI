@@ -2535,6 +2535,108 @@ window._firebaseOAuth = async function(provider) {
     <div class="section" style="margin-top:24px">
       <div class="section-header">
         <div>
+          <div class="section-title" data-i18n="section.runtimeEnv.title">运行时环境配置</div>
+          <div class="section-desc" data-i18n="section.runtimeEnv.desc">写入 SQLite 并立即覆盖进程环境变量；留空保存会清除运行时覆盖，回到 .env 或默认值。</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="App.loadRuntimeEnv()" data-i18n="action.refresh">刷新</button>
+          <button class="btn btn-primary btn-sm" onclick="App.saveRuntimeEnv()" data-i18n="runtimeEnv.save">保存配置</button>
+        </div>
+      </div>
+      <div class="section-body" style="display:grid;gap:14px">
+        <div class="form-grid" id="runtime-env-form">
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.usageBasis">Usage 口径</span>
+            <select class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS">
+              <option value="" data-i18n="runtimeEnv.defaultUpstream">默认 upstream</option>
+              <option value="upstream">upstream</option>
+              <option value="hybrid">hybrid</option>
+              <option value="official">official</option>
+              <option value="client">client</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.outputBasis">Output 口径</span>
+            <select class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_OUTPUT_BASIS">
+              <option value="" data-i18n="runtimeEnv.defaultValue">默认</option>
+              <option value="upstream">upstream</option>
+              <option value="response">response</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.freshInput">Fresh input tokens 覆盖</span>
+            <input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS" data-i18n-placeholder="runtimeEnv.freshInputPlaceholder" placeholder="留空 = 使用真实上游 input">
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.cacheBuckets">报告缓存桶</span>
+            <select class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS">
+              <option value="" data-i18n="runtimeEnv.defaultValue">默认</option>
+              <option value="1">1</option>
+              <option value="0">0</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.cacheHitRate">报告缓存命中率覆盖</span>
+            <input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE" data-i18n-placeholder="runtimeEnv.cacheHitRatePlaceholder" placeholder="留空 = 不覆盖">
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.cacheCreationRate">报告 cache creation 倍率</span>
+            <input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE" data-i18n-placeholder="runtimeEnv.cacheCreationRatePlaceholder" placeholder="留空 = 1">
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.cacheCreationTailRatio">official 尾部创建比例</span>
+            <input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO" placeholder="0.15">
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.reuseHashSystem">复用 hash system</span>
+            <select class="input" data-env-key="CASCADE_REUSE_HASH_SYSTEM">
+              <option value="" data-i18n="runtimeEnv.defaultStrict">默认严格</option>
+              <option value="0" data-i18n="runtimeEnv.ignoreSystemDrift">0 - 忽略 system 漂移</option>
+              <option value="1" data-i18n="runtimeEnv.includeSystem">1 - 纳入 system</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.allowSharedKey">共享 key 强制复用</span>
+            <select class="input" data-env-key="CASCADE_REUSE_ALLOW_SHARED_API_KEY">
+              <option value="" data-i18n="runtimeEnv.defaultOff">默认关闭</option>
+              <option value="1">1</option>
+              <option value="0">0</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span>CASCADE_POLL_INTERVAL_MS</span>
+            <input class="input" data-env-key="CASCADE_POLL_INTERVAL_MS" placeholder="500">
+          </label>
+          <label class="form-field">
+            <span>CASCADE_POLL_FAST_MS</span>
+            <input class="input" data-env-key="CASCADE_POLL_FAST_MS" placeholder="150">
+          </label>
+          <label class="form-field">
+            <span>CASCADE_POLL_FAST_UNTIL_MS</span>
+            <input class="input" data-env-key="CASCADE_POLL_FAST_UNTIL_MS" placeholder="4000">
+          </label>
+          <label class="form-field">
+            <span>CASCADE_POLL_MID_MS</span>
+            <input class="input" data-env-key="CASCADE_POLL_MID_MS" placeholder="300">
+          </label>
+          <label class="form-field">
+            <span>CASCADE_POLL_MID_UNTIL_MS</span>
+            <input class="input" data-env-key="CASCADE_POLL_MID_UNTIL_MS" placeholder="15000">
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.dumpPrompt">打印完整 prompt</span>
+            <select class="input" data-env-key="CASCADE_DEBUG_DUMP_PROMPT">
+              <option value="" data-i18n="runtimeEnv.off">关闭</option>
+              <option value="1" data-i18n="runtimeEnv.on">1 - 开启</option>
+            </select>
+          </label>
+        </div>
+        <div class="text-sm text-muted" data-i18n="runtimeEnv.hint">生产排查真实缓存建议：Usage=upstream，Fresh input tokens 留空，CASCADE_REUSE_HASH_SYSTEM=0。共享 key 强制复用只有单用户私有部署才建议开启。</div>
+      </div>
+    </div>
+    <div class="section" style="margin-top:24px">
+      <div class="section-header">
+        <div>
           <div class="section-title" data-i18n="section.credentials.title">凭证管理</div>
           <div class="section-desc" data-i18n="section.credentials.desc">运行时改 API_KEY 和 Dashboard 密码，写入 SQLite 立即生效，不用重启容器或重读 .env。改完之后下一次请求需要用新值；当前会话会要求重新登录。</div>
         </div>
@@ -6267,6 +6369,7 @@ docker compose up -d --force-recreate</pre>
     // the experimental/settings panel so the masked key + source labels
     // stay in sync with what SQLite actually holds.
     this.loadCredentials();
+    this.loadRuntimeEnv();
     const d = await this.api('GET', '/experimental');
     const cb = document.getElementById('exp-cascade-reuse');
     if (cb) cb.checked = !!d.flags?.cascadeConversationReuse;
@@ -6329,6 +6432,32 @@ docker compose up -d --force-recreate</pre>
         </div>
       `;
       }).join('');
+    }
+  },
+
+  async loadRuntimeEnv() {
+    try {
+      const d = await this.api('GET', '/settings/env');
+      const env = d.env || {};
+      document.querySelectorAll('#runtime-env-form [data-env-key]').forEach(el => {
+        el.value = env[el.dataset.envKey] || '';
+      });
+    } catch (e) {
+      this.toast('Failed to load runtime env: ' + (e.message || ''), 'error');
+    }
+  },
+
+  async saveRuntimeEnv() {
+    const env = {};
+    document.querySelectorAll('#runtime-env-form [data-env-key]').forEach(el => {
+      env[el.dataset.envKey] = String(el.value || '').trim();
+    });
+    const r = await this.api('PUT', '/settings/env', { env });
+    if (r.success) {
+      this.toast(I18n.t('runtimeEnv.saved') || 'Runtime env saved', 'success');
+      this.loadRuntimeEnv();
+    } else {
+      this.toast(r.error || 'Save failed', 'error');
     }
   },
 

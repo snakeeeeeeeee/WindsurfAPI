@@ -249,6 +249,10 @@
       "title": "凭证管理",
       "desc": "运行时改 API_KEY 和 Dashboard 密码，写入 SQLite 立即生效，不用重启容器或重读 .env。改完之后下一次请求需要用新值；当前会话会要求重新登录。"
     },
+    "runtimeEnv": {
+      "title": "运行时环境配置",
+      "desc": "写入 SQLite 并立即覆盖进程环境变量；留空保存会清除运行时覆盖，回到 .env 或默认值。"
+    },
     "droughtRestrict": {
       "title": "配额低水位时屏蔽 premium 模型",
       "desc": "所有账号本周配额都低于 5% 时，对 premium 模型（claude-opus / claude-sonnet 等）请求直接返 503，避免上游 rate-limit 烧最后一点配额。免费层模型（gemini-2.5-flash 等）保持可用。关闭后即使在 drought mode 也照常下发，accept 上游可能立即 429。",
@@ -658,6 +662,32 @@
     "bruteForceHint": "为防暴破：同一 IP 连续 5 次 dashboard 登录失败会被锁 30 分钟（v2.0.56 起）。",
     "confirmSave": "改完之后旧值立即失效，要继续吗？",
     "confirmClear": "清除运行时覆盖，回退 .env 值？"
+  },
+  "runtimeEnv": {
+    "save": "保存配置",
+    "saved": "运行时环境配置已保存",
+    "defaultValue": "默认",
+    "defaultUpstream": "默认 upstream",
+    "defaultStrict": "默认严格",
+    "defaultOff": "默认关闭",
+    "off": "关闭",
+    "on": "1 - 开启",
+    "ignoreSystemDrift": "0 - 忽略 system 漂移",
+    "includeSystem": "1 - 纳入 system",
+    "usageBasis": "Usage 口径",
+    "outputBasis": "Output 口径",
+    "freshInput": "Fresh input tokens 覆盖",
+    "freshInputPlaceholder": "留空 = 使用真实上游 input",
+    "cacheBuckets": "报告缓存桶",
+    "cacheHitRate": "报告缓存命中率覆盖",
+    "cacheHitRatePlaceholder": "留空 = 不覆盖；支持 0.5 或 50%",
+    "cacheCreationRate": "报告 cache creation 倍率",
+    "cacheCreationRatePlaceholder": "留空 = 1；支持 0.5 或 50%",
+    "cacheCreationTailRatio": "official 尾部创建比例",
+    "reuseHashSystem": "复用 hash system",
+    "allowSharedKey": "共享 key 强制复用",
+    "dumpPrompt": "打印完整 prompt",
+    "hint": "生产排查真实缓存建议：Usage=upstream，Fresh input tokens 留空，CASCADE_REUSE_HASH_SYSTEM=0。共享 key 强制复用只有单用户私有部署才建议开启。"
   },
   "confirm": {
     "restartTitle": "重启 Language Server",

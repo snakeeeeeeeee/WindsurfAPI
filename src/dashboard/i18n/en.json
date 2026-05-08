@@ -249,6 +249,10 @@
       "title": "Credentials",
       "desc": "Rotate API_KEY and the dashboard password at runtime. Saved into SQLite and applied immediately — no container restart or .env reload needed. Next request must use the new value; the current session will be asked to re-login."
     },
+    "runtimeEnv": {
+      "title": "Runtime env config",
+      "desc": "Saved to SQLite and applied to process env immediately. Saving an empty value clears the runtime override and falls back to .env or defaults."
+    },
     "quietWindow": {
       "title": "Auto-update on quiet window",
       "desc": "Watches per-minute request rate; if it stays at or below the threshold for the full window, auto-runs `docker compose pull && up -d`. 10-min cold-start grace; 24h cooldown after success; failure doesn't trigger cooldown. Requires /var/run/docker.sock mounted into the container (default docker-compose already does).",
@@ -658,6 +662,32 @@
     "bruteForceHint": "Brute-force guard: same IP gets locked for 30 minutes after 5 failed dashboard logins (since v2.0.56).",
     "confirmSave": "After saving, the old value stops working immediately. Continue?",
     "confirmClear": "Clear the runtime override and fall back to the .env value?"
+  },
+  "runtimeEnv": {
+    "save": "Save config",
+    "saved": "Runtime env config saved",
+    "defaultValue": "Default",
+    "defaultUpstream": "Default upstream",
+    "defaultStrict": "Default strict",
+    "defaultOff": "Default off",
+    "off": "Off",
+    "on": "1 - On",
+    "ignoreSystemDrift": "0 - Ignore system drift",
+    "includeSystem": "1 - Include system",
+    "usageBasis": "Usage basis",
+    "outputBasis": "Output basis",
+    "freshInput": "Fresh input tokens override",
+    "freshInputPlaceholder": "Empty = use real upstream input",
+    "cacheBuckets": "Report cache buckets",
+    "cacheHitRate": "Reported cache hit-rate override",
+    "cacheHitRatePlaceholder": "Empty = no override; accepts 0.5 or 50%",
+    "cacheCreationRate": "Reported cache creation multiplier",
+    "cacheCreationRatePlaceholder": "Empty = 1; accepts 0.5 or 50%",
+    "cacheCreationTailRatio": "official tail creation ratio",
+    "reuseHashSystem": "Reuse hash system",
+    "allowSharedKey": "Force reuse for shared key",
+    "dumpPrompt": "Dump full prompt",
+    "hint": "For production cache diagnostics: Usage=upstream, leave Fresh input tokens empty, and set CASCADE_REUSE_HASH_SYSTEM=0. Force shared-key reuse only for private single-user deployments."
   },
   "confirm": {
     "restartTitle": "Restart Language Server",

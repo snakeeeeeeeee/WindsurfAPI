@@ -137,11 +137,15 @@ function logCascadeReuseCheckin({
   ttlHint,
   stepOffset,
   generatorOffset,
+  fingerprintInfo,
 }) {
   const beforeTurns = Array.isArray(messages) ? messages.length : 0;
   const afterTurns = beforeTurns + 1;
   const aliasPart = fpAfterAlias ? ` fpAlias=${shortFp(fpAfterAlias)}` : '';
   const ttlPart = Number.isFinite(ttlHint) && ttlHint > 0 ? ` ttlHintMs=${ttlHint}` : '';
+  const afterDiag = fingerprintInfo && fingerprintInfo.ok
+    ? ` projectedHashAfter=${fingerprintInfo.projectedHash || ''} projectedTurnsAfter=${fingerprintInfo.projectedTurns ?? ''}`
+    : '';
   log.info(
     `Chat[${reqId || 'unknown'}]: cascade reuse checkin mode=${mode || 'unknown'} ` +
     `cascade=${String(cascadeId || '').slice(0, 8) || 'none'} ` +
@@ -151,7 +155,7 @@ function logCascadeReuseCheckin({
     `assistantLen=${String(assistantText || '').length} toolCalls=${Array.isArray(toolCalls) ? toolCalls.length : 0} ` +
     `reused=${reuseEntry ? 1 : 0} model=${modelKey || 'unknown'} ` +
     `stepOffset=${Number.isFinite(stepOffset) ? stepOffset : 'na'} ` +
-    `generatorOffset=${Number.isFinite(generatorOffset) ? generatorOffset : 'na'}${ttlPart}`,
+    `generatorOffset=${Number.isFinite(generatorOffset) ? generatorOffset : 'na'}${afterDiag}${ttlPart}`,
   );
 }
 
@@ -2657,6 +2661,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     if (poolCtx && cascadeMeta?.cascadeId && (allText || toolCalls.length)) {
       const turnComplete = appendAssistantTurn(messages, allText, toolCalls);
       const fpAfter = fingerprintAfter(turnComplete, modelKey, poolCtx.callerKey || '', poolCtx.fpOpts);
+      const fpAfterDebug = fingerprintDebug(turnComplete, modelKey, poolCtx.callerKey || '', poolCtx.fpOpts, 'after');
       const aliasModelKey = poolCtx.aliasModelKey;
       const fpAfterAlias = aliasModelKey && aliasModelKey !== modelKey
         ? fingerprintAfter(turnComplete, aliasModelKey, poolCtx.callerKey || '', poolCtx.fpOpts)
@@ -2695,6 +2700,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         ttlHint,
         stepOffset: checkinEntry.stepOffset,
         generatorOffset: checkinEntry.generatorOffset,
+        fingerprintInfo: fpAfterDebug,
       });
     }
 
@@ -3429,6 +3435,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             if (reuseEnabled && cascadeResult?.cascadeId && (accText || collectedToolCalls.length)) {
               const turnComplete = appendAssistantTurn(messages, accText, collectedToolCalls);
               const fpAfter = fingerprintAfter(turnComplete, modelKey, callerKey, fpOpts);
+              const fpAfterDebug = fingerprintDebug(turnComplete, modelKey, callerKey, fpOpts, 'after');
               const ttlHint = ttlHintFromCachePolicy(cachePolicy);
               const checkinEntry = {
                 cascadeId: cascadeResult.cascadeId,
@@ -3457,6 +3464,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 ttlHint,
                 stepOffset: checkinEntry.stepOffset,
                 generatorOffset: checkinEntry.generatorOffset,
+                fingerprintInfo: fpAfterDebug,
               });
             }
             // success

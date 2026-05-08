@@ -25,6 +25,7 @@ import {
   getExperimental, setExperimental, getSystemPrompts, setSystemPrompts, resetSystemPrompt,
   getCredentials, setRuntimeApiKey, setRuntimeDashboardPassword,
   verifyPassword, getEffectiveApiKey, getEffectiveDashboardPasswordStored,
+  getBusinessEnvConfig, setBusinessEnvConfig,
 } from '../runtime-config.js';
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
@@ -1089,6 +1090,23 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
     log.info(`Settings: credentials rotated from ${dashboardClientIp(req) || 'unknown'} (apiKey=${!!out.apiKeyUpdated}, dashboardPassword=${!!out.dashboardPasswordUpdated})`);
     return json(res, 200, { success: true, ...out });
+  }
+
+  // ─── Runtime business env (SQLite-backed overrides) ─────────────
+  // These are operational knobs that already exist as env vars but are also
+  // persisted in runtime-config so Docker users can change them without
+  // rebuilding or manually editing SQLite. Empty value clears the override.
+  if (subpath === '/settings/env' && method === 'GET') {
+    return json(res, 200, { env: getBusinessEnvConfig() });
+  }
+
+  if (subpath === '/settings/env' && method === 'PUT') {
+    if (!body || typeof body !== 'object') {
+      return json(res, 400, { error: 'Body must be a JSON object' });
+    }
+    const env = setBusinessEnvConfig(body.env && typeof body.env === 'object' ? body.env : body);
+    log.info(`Settings: runtime env updated from ${dashboardClientIp(req) || 'unknown'}`);
+    return json(res, 200, { success: true, env });
   }
 
   if (subpath === '/proxy' && method === 'GET') {

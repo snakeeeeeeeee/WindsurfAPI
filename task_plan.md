@@ -44,3 +44,5 @@
 - [complete] Phase 2: 移除偏 CCTest 外观的 `hybrid_max` / 跨 caller cache scope 方案，保留真实 caller 隔离。
 - [complete] Phase 3: 验证 Cascade 自适应轮询和 TTFT 诊断。
 - [complete] Phase 4: 增加 reuse MISS 指纹组成摘要，定位 system/tools/caller/history 漂移。
+- [complete] Phase 5: 增加 Dashboard 运行时业务 env 配置页，避免 Docker/SQLite 覆盖 `.env` 难排查。
+- [complete] Phase 6: 增加 Cascade checkin 的 after projectedHash 诊断，定位 CCTest tool-call 链 fpAfter/fpBefore 不一致。

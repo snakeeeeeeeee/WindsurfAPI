@@ -20,3 +20,5 @@
 - CCTest 报告可被 report-only usage 影响，但真实使用场景不应靠改写 usage 解决；保留 `upstream` 才能反映真实上游 cache_read/cache_write。
 - 长文本首字慢有两部分：真实模型/上游首 chunk 产生时间，以及本地 Cascade polling 抓到首 chunk 的等待时间。自适应 early polling 只能降低后者，不能保证 `<1s`。
 - 真实低命中排查应看 reuse MISS 细节里的 `systemHash`、`toolsHash`、`callerHash`、`projectedHash`，判断是 system/tools/caller/history 哪个维度漂移。
+- Docker 线上环境里 `.env` 不是业务 env 的唯一权威源；SQLite `runtime.config.envConfig` 会在启动时覆盖 `WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS` 等键，导致 `.env` 清空后 CCTest 仍看到 `input_tokens=1`。
+- 2026-05-08 CCTest 日志显示普通顺序对话已能 `fpBefore -> fpAfter -> next fpBefore` 连续 HIT；但工具调用链中 `checkin fpAfter` 与下一轮 `fpBefore` 持续不一致，且集中在 assistant/tool/tool_result 历史，不能通过忽略工具参数这种高风险方式直接放宽。

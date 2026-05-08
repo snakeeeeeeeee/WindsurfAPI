@@ -1966,6 +1966,64 @@ window._firebaseOAuth = async function(provider) {
     <div class="section" style="margin-top:24px">
       <div class="section-head">
         <div>
+          <div class="section-title"><span class="num">~</span><span data-zh="运行时环境配置" data-en="Runtime env config">运行时环境配置</span></div>
+          <div class="section-desc" data-zh="写入 SQLite 并立即覆盖进程环境变量；留空保存会清除运行时覆盖，回到 .env 或默认值。" data-en="Saved to SQLite and applied immediately. Empty values clear runtime overrides and fall back to .env/defaults.">写入 SQLite 并立即覆盖进程环境变量；留空保存会清除运行时覆盖。</div>
+        </div>
+      </div>
+      <div class="frame" style="display:grid;gap:14px">
+        <div class="field-grid" id="runtime-env-form">
+          <div class="field"><label class="field-label">Usage basis</label><select class="select" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS">
+            <option value="" data-zh="默认 upstream" data-en="Default upstream">默认 upstream</option>
+            <option value="upstream">upstream</option>
+            <option value="hybrid">hybrid</option>
+            <option value="official">official</option>
+            <option value="client">client</option>
+          </select></div>
+          <div class="field"><label class="field-label">Output basis</label><select class="select" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_OUTPUT_BASIS">
+            <option value="" data-zh="默认" data-en="Default">默认</option>
+            <option value="upstream">upstream</option>
+            <option value="response">response</option>
+          </select></div>
+          <div class="field"><label class="field-label">Fresh input tokens</label><input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS" placeholder="留空 = 真实上游 input"></div>
+          <div class="field"><label class="field-label">Cache buckets</label><select class="select" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS">
+            <option value="" data-zh="默认" data-en="Default">默认</option>
+            <option value="1">1</option>
+            <option value="0">0</option>
+          </select></div>
+          <div class="field"><label class="field-label">Cache hit rate</label><input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE" placeholder="留空 = 不覆盖"></div>
+          <div class="field"><label class="field-label">Cache creation rate</label><input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE" placeholder="留空 = 1"></div>
+          <div class="field"><label class="field-label">Creation tail ratio</label><input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO" placeholder="0.15"></div>
+          <div class="field"><label class="field-label">CASCADE_REUSE_HASH_SYSTEM</label><select class="select" data-env-key="CASCADE_REUSE_HASH_SYSTEM">
+            <option value="" data-zh="默认严格" data-en="Default strict">默认严格</option>
+            <option value="0" data-zh="0 - 忽略 system 漂移" data-en="0 - Ignore system drift">0 - 忽略 system 漂移</option>
+            <option value="1" data-zh="1 - 纳入 system" data-en="1 - Include system">1 - 纳入 system</option>
+          </select></div>
+          <div class="field"><label class="field-label">CASCADE_REUSE_ALLOW_SHARED_API_KEY</label><select class="select" data-env-key="CASCADE_REUSE_ALLOW_SHARED_API_KEY">
+            <option value="" data-zh="默认关闭" data-en="Default off">默认关闭</option>
+            <option value="1">1</option>
+            <option value="0">0</option>
+          </select></div>
+          <div class="field"><label class="field-label">CASCADE_POLL_INTERVAL_MS</label><input class="input" data-env-key="CASCADE_POLL_INTERVAL_MS" placeholder="500"></div>
+          <div class="field"><label class="field-label">CASCADE_POLL_FAST_MS</label><input class="input" data-env-key="CASCADE_POLL_FAST_MS" placeholder="150"></div>
+          <div class="field"><label class="field-label">CASCADE_POLL_FAST_UNTIL_MS</label><input class="input" data-env-key="CASCADE_POLL_FAST_UNTIL_MS" placeholder="4000"></div>
+          <div class="field"><label class="field-label">CASCADE_POLL_MID_MS</label><input class="input" data-env-key="CASCADE_POLL_MID_MS" placeholder="300"></div>
+          <div class="field"><label class="field-label">CASCADE_POLL_MID_UNTIL_MS</label><input class="input" data-env-key="CASCADE_POLL_MID_UNTIL_MS" placeholder="15000"></div>
+          <div class="field"><label class="field-label">CASCADE_DEBUG_DUMP_PROMPT</label><select class="select" data-env-key="CASCADE_DEBUG_DUMP_PROMPT">
+            <option value="" data-zh="关闭" data-en="Off">关闭</option>
+            <option value="1" data-zh="1 - 开启" data-en="1 - On">1 - 开启</option>
+          </select></div>
+        </div>
+        <div class="field-row-actions">
+          <button class="btn btn-ghost btn-sm" onclick="App.loadRuntimeEnv()" data-zh="刷新" data-en="refresh">刷新</button>
+          <button class="btn btn-sm" onclick="App.saveRuntimeEnv()" data-zh="保存配置" data-en="save config">保存配置</button>
+        </div>
+        <div class="text-sm text-mute" data-zh="生产排查真实缓存建议：Usage=upstream，Fresh input tokens 留空，CASCADE_REUSE_HASH_SYSTEM=0。共享 key 强制复用只建议单用户私有部署开启。" data-en="Production cache diagnostics: Usage=upstream, leave Fresh input tokens empty, and set CASCADE_REUSE_HASH_SYSTEM=0. Force shared-key reuse only for private single-user deployments.">生产排查真实缓存建议：Usage=upstream，Fresh input tokens 留空，CASCADE_REUSE_HASH_SYSTEM=0。</div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:24px">
+      <div class="section-head">
+        <div>
           <div class="section-title"><span class="num">~</span><span data-zh="凭证管理" data-en="Credentials">凭证管理</span></div>
           <div class="section-desc" data-zh="运行时改 API_KEY 和 Dashboard 密码，写入 runtime-config.json 立即生效，不重启容器。改完之后下一次请求要用新值。" data-en="Rotate API_KEY and dashboard password from this panel; persisted to runtime-config.json. New value takes effect on the next request.">运行时改 API_KEY 和 Dashboard 密码，写入 runtime-config.json 立即生效，不重启容器。改完之后下一次请求要用新值。</div>
         </div>
@@ -3335,6 +3393,7 @@ const App = {
   async loadExperimental() {
     // v2.0.56: refresh credentials snapshot when the panel opens.
     this.loadCredentials();
+    this.loadRuntimeEnv();
     const r = await this.api('GET', '/experimental');
     const flag = r.flags?.cascadeConversationReuse ?? r.cascadeConversationReuse;
     const cb = document.getElementById('exp-cascade-reuse');
@@ -3357,6 +3416,32 @@ const App = {
     // the production UI. Render is best-effort: if /system-prompts is gone
     // (older backend) just hide the section silently.
     await this.loadSystemPrompts();
+  },
+
+  async loadRuntimeEnv() {
+    try {
+      const d = await this.api('GET', '/settings/env');
+      const env = d.env || {};
+      document.querySelectorAll('#runtime-env-form [data-env-key]').forEach(el => {
+        el.value = env[el.dataset.envKey] || '';
+      });
+    } catch (e) {
+      this.toast('runtime env load failed: ' + (e.message || ''));
+    }
+  },
+
+  async saveRuntimeEnv() {
+    const env = {};
+    document.querySelectorAll('#runtime-env-form [data-env-key]').forEach(el => {
+      env[el.dataset.envKey] = String(el.value || '').trim();
+    });
+    try {
+      const r = await this.api('PUT', '/settings/env', { env });
+      this.toast(r.success ? 'runtime env saved' : (r.error || 'save failed'));
+      this.loadRuntimeEnv();
+    } catch (e) {
+      this.toast('save failed: ' + (e.message || ''));
+    }
   },
 
   /* ── credentials (v2.0.56) — runtime-rotatable API_KEY + dashboard pw */
