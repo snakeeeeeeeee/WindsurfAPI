@@ -20,7 +20,7 @@ import { getEffectiveProxy } from '../dashboard/proxy-config.js';
 import { markDynamicProxyFailure } from '../dynamic-proxy.js';
 import { isProxyError } from '../proxy-test.js';
 import {
-  fingerprintBefore, fingerprintAfter, checkout as poolCheckout, checkin as poolCheckin,
+  fingerprintBefore, fingerprintAfter, fingerprintAfterToolCallAliases, checkout as poolCheckout, checkin as poolCheckin,
   fingerprintDebug,
 } from '../conversation-pool.js';
 import {
@@ -2703,7 +2703,8 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       const fpAfterAlias = aliasModelKey && aliasModelKey !== modelKey
         ? fingerprintAfter(turnComplete, aliasModelKey, poolCtx.callerKey || '', poolCtx.fpOpts)
         : null;
-      const fingerprints = fpAfterAlias ? [fpAfter, fpAfterAlias] : fpAfter;
+      const fpToolAliases = fingerprintAfterToolCallAliases(turnComplete, modelKey, poolCtx.callerKey || '', poolCtx.fpOpts);
+      const fingerprints = [fpAfter, ...(fpAfterAlias ? [fpAfterAlias] : []), ...fpToolAliases].filter(Boolean);
       const ttlHint = ttlHintFromCachePolicy(poolCtx.cachePolicy);
       // Explicit 0 (not undefined) clears any inherited 1h hint when the
       // current request didn't ask for it (MED-2). ttlHintFromCachePolicy
@@ -3486,7 +3487,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 historyCoverage: cascadeResult.historyCoverage || reuseEntry?.historyCoverage || null,
                 createdAt: reuseEntry?.createdAt,
               };
-              poolCheckin(fpAfter, checkinEntry, callerKey, ttlHint === undefined ? 0 : ttlHint);
+              const fpToolAliases = fingerprintAfterToolCallAliases(turnComplete, modelKey, callerKey, fpOpts);
+              poolCheckin([fpAfter, ...fpToolAliases].filter(Boolean), checkinEntry, callerKey, ttlHint === undefined ? 0 : ttlHint);
               logCascadeReuseCheckin({
                 reqId,
                 mode: 'stream',

@@ -114,6 +114,8 @@ describe('dashboard batch import proxy binding', () => {
         WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS: '1',
         WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS: 'upstream',
         CASCADE_REUSE_HASH_SYSTEM: '0',
+        CASCADE_REUSE_HASH_TOOL_ARGS: '0',
+        CASCADE_REUSE_SINGLE_TOOL_ALIAS: '1',
         WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS: '2',
       },
     }, { headers: {} }, save);
@@ -122,6 +124,8 @@ describe('dashboard batch import proxy binding', () => {
     assert.equal(save.json().env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS, '1');
     assert.equal(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS, '1');
     assert.equal(getBusinessEnvConfig().CASCADE_REUSE_HASH_SYSTEM, '0');
+    assert.equal(getBusinessEnvConfig().CASCADE_REUSE_HASH_TOOL_ARGS, '0');
+    assert.equal(getBusinessEnvConfig().CASCADE_REUSE_SINGLE_TOOL_ALIAS, '1');
     assert.equal(getBusinessEnvConfig().WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, '2');
     assert.equal(process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, '2');
 

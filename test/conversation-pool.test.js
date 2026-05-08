@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { fingerprintBefore, fingerprintAfter, fingerprintDebug, checkout, checkin, poolStats, poolClear, invalidateFor } from '../src/conversation-pool.js';
+import { fingerprintBefore, fingerprintAfter, fingerprintAfterToolCallAliases, fingerprintDebug, checkout, checkin, poolStats, poolClear, invalidateFor } from '../src/conversation-pool.js';
 
 describe('fingerprintBefore', () => {
   it('returns null for single-message conversations', () => {
@@ -338,6 +338,58 @@ describe('fingerprintAfter', () => {
     ];
     assert.equal(fingerprintBefore(nested, 'm', 'c'), fingerprintBefore(topLevelArguments, 'm', 'c'));
     assert.equal(fingerprintBefore(nested, 'm', 'c'), fingerprintBefore(topLevelArgumentsJson, 'm', 'c'));
+  });
+
+  it('can ignore assistant tool_call argument drift when explicitly configured', () => {
+    const previous = process.env.CASCADE_REUSE_HASH_TOOL_ARGS;
+    process.env.CASCADE_REUSE_HASH_TOOL_ARGS = '0';
+    try {
+      const a = [
+        { role: 'user', content: 'run command' },
+        { role: 'assistant', content: '', tool_calls: [{ function: { name: 'Bash', arguments: '{"command":"pwd"}' } }] },
+        { role: 'tool', tool_call_id: 'call_1', content: 'ok' },
+        { role: 'user', content: 'next' },
+      ];
+      const b = [
+        { role: 'user', content: 'run command' },
+        { role: 'assistant', content: '', tool_calls: [{ function: { name: 'Bash', arguments: '{"command":"ls -la"}' } }] },
+        { role: 'tool', tool_call_id: 'call_1', content: 'ok' },
+        { role: 'user', content: 'next' },
+      ];
+      assert.equal(fingerprintBefore(a, 'm', 'c'), fingerprintBefore(b, 'm', 'c'));
+    } finally {
+      if (previous === undefined) delete process.env.CASCADE_REUSE_HASH_TOOL_ARGS;
+      else process.env.CASCADE_REUSE_HASH_TOOL_ARGS = previous;
+    }
+  });
+});
+
+describe('fingerprintAfterToolCallAliases', () => {
+  it('builds single-tool aliases for clients that replay only one tool_use from a multi-call turn', () => {
+    const messages = [
+      { role: 'user', content: 'create files' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_a', type: 'function', function: { name: 'Write', arguments: '{"file_path":"a.js"}' } },
+          { id: 'call_b', type: 'function', function: { name: 'Write', arguments: '{"file_path":"b.js"}' } },
+        ],
+      },
+    ];
+    const aliases = fingerprintAfterToolCallAliases(messages, 'm', 'c');
+    const oneToolReplay = [
+      { role: 'user', content: 'create files' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_b', type: 'function', function: { name: 'Write', arguments: '{"file_path":"b.js"}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_b', content: 'ok' },
+    ];
+    assert.ok(aliases.includes(fingerprintBefore(oneToolReplay, 'm', 'c')));
   });
 });
 

@@ -31,3 +31,5 @@
 - `Cascade cold stall: 75131ms active without any text or tool call` 属于首字前上游/Cascade 无产出的 `transient_stall`。当前 stream 代码在 catch 后用“总耗时 >= fastSwitchBudgetMs”直接 break；由于 cold stall 本身就超过 75s，默认 3s budget 永远会阻止换账号。应对 transient stall 单独给一个很小的换号次数上限，而不是用首字前总耗时预算拦截。
 - 2026-05-09 最新 CCTest/new-api 日志里 `cache_read` 多次固定在约 `4401`，不是“前面每轮 cache_write 必须累计进下一轮 cache_read”的模型。当前配置 `Usage=upstream` 时展示的是 Cascade 上游本次请求实际读到的缓存前缀/桶；稳定 system/tools/preamble 前缀容易反复读到同一段，而新增 assistant/tool_result 历史可能继续作为 fresh/cache_write，不保证下一轮线性累加为更大的 read。
 - 同一日志里的 `Messages stream error: context is not defined` 是 stream path 真实代码 bug：`streamResponse()` 是顶层 helper，却在限流 burst 逻辑里引用了外层 `context.__rateLimitEvents` / `context.__rlAborted`。应通过 deps 显式传入 request context，或改为 helper 内局部状态；保留 request context 更贴近 non-stream 行为。
+- 2026-05-09 19:15 CCTest 复测中已不再出现 `context is not defined`，rate limit 后也能切到 attempt=2；首字多在 1.7s-6.4s，长输出的 `pollMs` 仍会很大但不是首字阻塞。剩余高倍率来自工具链 `stream reuse MISS` 持续存在。
+- 同轮日志明确显示 checkin 的 assistant `toolCalls=7/6/5/4`，下一轮客户端回放的 projectedTail 只剩 `toolCalls=1`，并且 `toolArgsHash` 持续从 checkin 值变成客户端回放值。因此仅修 assistant narration 不够；需要兼容“客户端只回放单个 tool_use”以及可选忽略工具参数值漂移。

@@ -47,6 +47,10 @@ function shortDigest(s, n = 16) {
   return sha256(String(s ?? '')).slice(0, n);
 }
 
+function shouldHashToolArgs() {
+  return process.env.CASCADE_REUSE_HASH_TOOL_ARGS !== '0';
+}
+
 // Client-injected meta tags whose bodies change every turn (cwd snapshot,
 // todo state, current time, hook output, slash-command echo). If we hash
 // these, the fingerprint drifts even when the real user text is unchanged
@@ -274,7 +278,9 @@ function projectAssistantToolCalls(m) {
   if (Array.isArray(m?.tool_calls)) {
     for (const tc of m.tool_calls) {
       const name = tc?.function?.name || tc?.name || '';
-      const args = tc?.function?.arguments ?? tc?.argumentsJson ?? tc?.arguments ?? tc?.input;
+      const args = shouldHashToolArgs()
+        ? (tc?.function?.arguments ?? tc?.argumentsJson ?? tc?.arguments ?? tc?.input)
+        : {};
       let argsCanonical;
       if (typeof args === 'string') {
         try { argsCanonical = stableStringify(JSON.parse(args)); }
@@ -290,7 +296,7 @@ function projectAssistantToolCalls(m) {
   if (Array.isArray(m?.content)) {
     for (const part of m.content) {
       if (part?.type === 'tool_use') {
-        calls.push({ name: part.name || '', args: stableStringify(part.input ?? null) });
+        calls.push({ name: part.name || '', args: stableStringify(shouldHashToolArgs() ? (part.input ?? null) : {}) });
       }
     }
   }
@@ -520,6 +526,30 @@ export function fingerprintAfter(messages, modelKey = '', callerKey = '', opts =
     tools,
     turns: projection.turns,
   }));
+}
+
+export function fingerprintAfterToolCallAliases(messages, modelKey = '', callerKey = '', opts = {}) {
+  if (process.env.CASCADE_REUSE_SINGLE_TOOL_ALIAS === '0') return [];
+  if (!Array.isArray(messages) || !messages.length) return [];
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== 'assistant') return [];
+  const calls = Array.isArray(last.tool_calls) ? last.tool_calls : [];
+  if (calls.length <= 1) return [];
+
+  const out = [];
+  const seen = new Set();
+  for (const call of calls) {
+    const aliasMessages = [
+      ...messages.slice(0, -1),
+      { ...last, tool_calls: [call] },
+    ];
+    const fp = fingerprintAfter(aliasMessages, modelKey, callerKey, opts);
+    if (fp && !seen.has(fp)) {
+      seen.add(fp);
+      out.push(fp);
+    }
+  }
+  return out;
 }
 
 export function fingerprintDebug(messages, modelKey = '', callerKey = '', opts = {}, scope = 'before') {

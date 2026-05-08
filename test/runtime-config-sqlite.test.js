@@ -16,6 +16,8 @@ const BUSINESS_ENV_KEYS = [
   'WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE',
   'WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE',
   'CASCADE_REUSE_HASH_SYSTEM',
+  'CASCADE_REUSE_HASH_TOOL_ARGS',
+  'CASCADE_REUSE_SINGLE_TOOL_ALIAS',
   'CASCADE_REUSE_ALLOW_SHARED_API_KEY',
   'CASCADE_POLL_INTERVAL_MS',
   'CASCADE_POLL_FAST_MS',
@@ -79,6 +81,8 @@ describe('runtime-config SQLite defaults', () => {
     process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES = 'public-a=internal-a';
     process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'hybrid';
     process.env.CASCADE_REUSE_HASH_SYSTEM = '0';
+    process.env.CASCADE_REUSE_HASH_TOOL_ARGS = '0';
+    process.env.CASCADE_REUSE_SINGLE_TOOL_ALIAS = '1';
     process.env.CASCADE_POLL_FAST_MS = '150';
     process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS = '2';
     process.env.CASCADE_DEBUG_DUMP_PROMPT = '1';
@@ -90,6 +94,8 @@ describe('runtime-config SQLite defaults', () => {
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'public-a=internal-a');
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, 'hybrid');
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_REUSE_HASH_SYSTEM, '0');
+    assert.equal(runtime.getBusinessEnvConfig().CASCADE_REUSE_HASH_TOOL_ARGS, '0');
+    assert.equal(runtime.getBusinessEnvConfig().CASCADE_REUSE_SINGLE_TOOL_ALIAS, '1');
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_POLL_FAST_MS, '150');
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, '2');
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_DEBUG_DUMP_PROMPT, '1');
@@ -118,18 +124,24 @@ describe('runtime-config SQLite defaults', () => {
     runtime.setBusinessEnvConfig({
       WINDSURFAPI_PUBLIC_MODEL_ALIASES: 'runtime=target',
       WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS: 'hybrid',
+      CASCADE_REUSE_HASH_TOOL_ARGS: '0',
+      CASCADE_REUSE_SINGLE_TOOL_ALIAS: '1',
       CASCADE_POLL_INTERVAL_MS: '500',
       WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS: '2',
       CASCADE_DEBUG_DUMP_PROMPT: '1',
     });
     assert.equal(process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'runtime=target');
     assert.equal(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, 'hybrid');
+    assert.equal(process.env.CASCADE_REUSE_HASH_TOOL_ARGS, '0');
+    assert.equal(process.env.CASCADE_REUSE_SINGLE_TOOL_ALIAS, '1');
     assert.equal(process.env.CASCADE_POLL_INTERVAL_MS, '500');
     assert.equal(process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, '2');
     assert.equal(process.env.CASCADE_DEBUG_DUMP_PROMPT, '1');
 
     runtime.setBusinessEnvConfig({
       WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS: '',
+      CASCADE_REUSE_HASH_TOOL_ARGS: '',
+      CASCADE_REUSE_SINGLE_TOOL_ALIAS: '',
       CASCADE_POLL_INTERVAL_MS: '',
       WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS: '',
       CASCADE_DEBUG_DUMP_PROMPT: '',
@@ -138,11 +150,15 @@ describe('runtime-config SQLite defaults', () => {
 
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'runtime=target');
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, undefined);
+    assert.equal(runtime.getBusinessEnvConfig().CASCADE_REUSE_HASH_TOOL_ARGS, undefined);
+    assert.equal(runtime.getBusinessEnvConfig().CASCADE_REUSE_SINGLE_TOOL_ALIAS, undefined);
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_POLL_INTERVAL_MS, undefined);
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, undefined);
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_DEBUG_DUMP_PROMPT, undefined);
     assert.equal(process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'runtime=target');
     assert.equal(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, undefined);
+    assert.equal(process.env.CASCADE_REUSE_HASH_TOOL_ARGS, undefined);
+    assert.equal(process.env.CASCADE_REUSE_SINGLE_TOOL_ALIAS, undefined);
     assert.equal(process.env.CASCADE_POLL_INTERVAL_MS, undefined);
     assert.equal(process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, undefined);
     assert.equal(process.env.CASCADE_DEBUG_DUMP_PROMPT, undefined);
