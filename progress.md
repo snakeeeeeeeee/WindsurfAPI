@@ -27,3 +27,11 @@
 - Added assistant tool_call argument shape normalization for nested `function.arguments`, top-level `arguments`, top-level `argumentsJson`, and `input`, matching common OpenAI-compatible client history variants.
 - Made `cleanupOrphanLanguageServers()` skip quietly when `ps` is absent in Alpine/minimal containers, removing startup WARN noise without changing LS startup.
 - Verification passed: `node --check src/conversation-pool.js`, `node --check src/langserver.js`, `node --test test/conversation-pool.test.js test/chat-reuse.test.js`, and `git diff --check`.
+
+## 2026-05-09
+
+- Analyzed the latest CCTest run: first-token capture is faster in the new logs, but one request hit a real Cascade cold stall (`75s active without any text/tool`) and stream retry stopped after one account because the stall exceeded the fast-switch budget.
+- Changed stream retry gating so `transient_stall` can switch accounts once by default even after the fast-switch time budget elapsed; non-transient errors remain budget-bound. The cap can be adjusted with `WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS`.
+- Fixed a remaining tool-chain reuse mismatch: assistant turns with `tool_calls` now ignore unstable assistant narration in the fingerprint, matching clients that replay the same tool_calls with `content: ""` or `null`. Normal assistant text turns still hash text strictly.
+- Added hash-only `projectedTail` diagnostics to reuse MISS/checkin logs so future mismatches can compare recent projected roles, text hashes, tool names/args hashes, and tool-result hashes without leaking prompt content.
+- Verification passed: `node --check src/conversation-pool.js`, `node --check src/handlers/chat.js`, `node --test test/conversation-pool.test.js test/chat-reuse.test.js`, and `git diff --check`.

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { isThinkingRequested, shouldUseCascadeReuse, shouldUseStrictCascadeReuse } from '../src/handlers/chat.js';
+import { isThinkingRequested, shouldUseCascadeReuse, shouldUseStrictCascadeReuse, streamFastSwitchDecision } from '../src/handlers/chat.js';
 
 describe('shouldUseCascadeReuse', () => {
   it('allows reuse for normal Cascade chat turns', () => {
@@ -147,5 +147,57 @@ describe('isThinkingRequested', () => {
     assert.equal(isThinkingRequested({}), false);
     assert.equal(isThinkingRequested(null), false);
     assert.equal(isThinkingRequested(undefined), false);
+  });
+});
+
+describe('streamFastSwitchDecision', () => {
+  it('allows one transient stall retry even after the fast-switch budget elapsed', () => {
+    const previous = process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS;
+    delete process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS;
+    try {
+      const decision = streamFastSwitchDecision({
+        elapsedMs: 75_000,
+        fastSwitchBudgetMs: 3_000,
+        attempt: 0,
+        fastSwitchMaxAttempts: 9,
+        isTransient: true,
+      });
+      assert.equal(decision.shouldRetry, true);
+      assert.equal(decision.budgetExhausted, true);
+    } finally {
+      if (previous === undefined) delete process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS;
+      else process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS = previous;
+    }
+  });
+
+  it('keeps non-transient retries bound by the fast-switch budget', () => {
+    const decision = streamFastSwitchDecision({
+      elapsedMs: 75_000,
+      fastSwitchBudgetMs: 3_000,
+      attempt: 0,
+      fastSwitchMaxAttempts: 9,
+      isTransient: false,
+    });
+    assert.equal(decision.shouldRetry, false);
+    assert.equal(decision.reason, 'budget_exhausted');
+  });
+
+  it('caps transient stall retries tightly by default', () => {
+    const previous = process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS;
+    delete process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS;
+    try {
+      const decision = streamFastSwitchDecision({
+        elapsedMs: 150_000,
+        fastSwitchBudgetMs: 3_000,
+        attempt: 1,
+        fastSwitchMaxAttempts: 9,
+        isTransient: true,
+      });
+      assert.equal(decision.shouldRetry, false);
+      assert.equal(decision.reason, 'transient_stall_switch_exhausted');
+    } finally {
+      if (previous === undefined) delete process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS;
+      else process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS = previous;
+    }
   });
 });

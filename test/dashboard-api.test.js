@@ -25,10 +25,12 @@ afterEach(() => {
     WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS: '',
     WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS: '',
     CASCADE_REUSE_HASH_SYSTEM: '',
+    WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS: '',
   });
   delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
   delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
   delete process.env.CASCADE_REUSE_HASH_SYSTEM;
+  delete process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS;
 });
 
 function fakeRes() {
@@ -112,6 +114,7 @@ describe('dashboard batch import proxy binding', () => {
         WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS: '1',
         WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS: 'upstream',
         CASCADE_REUSE_HASH_SYSTEM: '0',
+        WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS: '2',
       },
     }, { headers: {} }, save);
 
@@ -119,6 +122,8 @@ describe('dashboard batch import proxy binding', () => {
     assert.equal(save.json().env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS, '1');
     assert.equal(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS, '1');
     assert.equal(getBusinessEnvConfig().CASCADE_REUSE_HASH_SYSTEM, '0');
+    assert.equal(getBusinessEnvConfig().WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, '2');
+    assert.equal(process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, '2');
 
     const clear = fakeRes();
     await handleDashboardApi('PUT', '/settings/env', {

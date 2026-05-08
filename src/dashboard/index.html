@@ -2625,6 +2625,10 @@ window._firebaseOAuth = async function(provider) {
             <input class="input" data-env-key="CASCADE_POLL_MID_UNTIL_MS" placeholder="15000">
           </label>
           <label class="form-field">
+            <span data-i18n="runtimeEnv.transientStallSwitchMax">冷无输出换号次数</span>
+            <input class="input" data-env-key="WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS" data-i18n-placeholder="runtimeEnv.transientStallSwitchMaxPlaceholder" placeholder="留空 = 1">
+          </label>
+          <label class="form-field">
             <span data-i18n="runtimeEnv.dumpPrompt">打印完整 prompt</span>
             <select class="input" data-env-key="CASCADE_DEBUG_DUMP_PROMPT">
               <option value="" data-i18n="runtimeEnv.off">关闭</option>

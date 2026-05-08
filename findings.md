@@ -27,3 +27,5 @@
 - 真实日志里 `toolCalls=5` 后下一轮变成 MISS 的更确定原因是 `fingerprintBefore()` 只剥掉最后一个 trailing `tool` 消息；OpenAI/Codex 会一次带回多个连续 tool results，必须把整组 trailing tool results 作为最新输入 turn 一起剥掉，才能匹配上一轮 assistant tool_calls checkin 的 fpAfter。
 - 2026-05-09 CCTest 日志里 input tokens 已恢复为真实上游 `570`，说明 Dashboard 清空 Fresh input tokens 覆盖后 SQLite runtime config 已生效；剩余高倍率主要来自工具链多轮 `reuse MISS` 和 cache_read 仅约 4401。
 - 同一日志里单个 `toolCalls=1` 后下一轮仍 MISS，说明不仅是连续 tool results；客户端历史里的 assistant `tool_calls` 参数可能使用顶层 `arguments` / `argumentsJson`，而本地合成 checkin 使用 `function.arguments`。指纹投影需要兼容这些常见形态。
+- 2026-05-09 新日志里 `qpk96k` 等工具调用 turn 的 checkin 出现 `assistantLen=823 toolCalls=10`，但下一轮 Probe 显示客户端历史 `role=assistant len=0`。这会让本地 `fpAfter` 哈希了 assistant 叙述文本，而客户端 `fpBefore` 没有该文本，导致工具链每轮 MISS。工具调用 turn 的真实状态由 `tool_calls` 决定，应只在 `tool_calls.length > 0` 时忽略 assistant narration；普通 assistant 文本仍需参与哈希。
+- `Cascade cold stall: 75131ms active without any text or tool call` 属于首字前上游/Cascade 无产出的 `transient_stall`。当前 stream 代码在 catch 后用“总耗时 >= fastSwitchBudgetMs”直接 break；由于 cold stall 本身就超过 75s，默认 3s budget 永远会阻止换账号。应对 transient stall 单独给一个很小的换号次数上限，而不是用首字前总耗时预算拦截。

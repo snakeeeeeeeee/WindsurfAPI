@@ -687,6 +687,8 @@
     "cacheCreationTailRatio": "official 尾部创建比例",
     "reuseHashSystem": "复用 hash system",
     "allowSharedKey": "共享 key 强制复用",
+    "transientStallSwitchMax": "冷无输出换号次数",
+    "transientStallSwitchMaxPlaceholder": "留空 = 1；0 = 不换号",
     "dumpPrompt": "打印完整 prompt",
     "hint": "生产排查真实缓存建议：Usage=upstream，Fresh input tokens 留空，CASCADE_REUSE_HASH_SYSTEM=0。共享 key 强制复用只有单用户私有部署才建议开启。"
   },

@@ -47,3 +47,5 @@
 - [complete] Phase 5: 增加 Dashboard 运行时业务 env 配置页，避免 Docker/SQLite 覆盖 `.env` 难排查。
 - [complete] Phase 6: 增加 Cascade checkin 的 after projectedHash 诊断，定位 CCTest tool-call 链 fpAfter/fpBefore 不一致。
 - [complete] Phase 7: 增加 Dashboard 服务重启按钮，保存运行时配置后可由 Docker/进程守护重新拉起并读取 SQLite 覆盖配置。
+- [complete] Phase 8: 修复工具调用轮 assistant 文本回放差异导致的复用 MISS，并补充 hash-only projectedTail 诊断。
+- [complete] Phase 9: 修复 stream 冷无输出 transient stall 被 fast-switch 预算挡住、无法换账号重试的问题。

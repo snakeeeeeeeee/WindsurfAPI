@@ -317,13 +317,18 @@ function projectMessage(m) {
   if (role === 'assistant') {
     // Project to a stable text + tool_calls digest. Drop reasoning / metadata
     // / id fields that drift across re-renders.
+    const toolCalls = projectAssistantToolCalls(m);
     const blocks = canonicaliseContent(m.content);
-    const text = blocks
+    // Tool-call assistant turns are replayed inconsistently by OpenAI-
+    // compatible clients: some keep the model's narrative preamble, while
+    // others send `content: ""`/`null` and only preserve `tool_calls`.
+    // The upstream Cascade state is governed by the calls here, so hash the
+    // call digest and ignore unstable narration only for tool-call turns.
+    const text = toolCalls.length ? '' : blocks
       .filter(b => b.type === 'text')
       .map(b => (b.text || '').replace(/\s+/g, ' ').trim())
       .join('\n')
       .trim();
-    const toolCalls = projectAssistantToolCalls(m);
     return { role: 'assistant', text, tool_calls: toolCalls };
   }
   // Unknown role — preserve as-is so it's neither swallowed nor confused
@@ -420,6 +425,35 @@ function projectTurns(turns) {
     projected.push(p);
   }
   return { turns: projected };
+}
+
+function summarizeProjectedTurn(turn) {
+  const role = String(turn?.role || 'unknown');
+  if (role === 'assistant') {
+    const calls = Array.isArray(turn.tool_calls) ? turn.tool_calls : [];
+    return {
+      role,
+      textLen: String(turn.text || '').length,
+      textHash: shortDigest(turn.text || '', 12),
+      toolCalls: calls.length,
+      toolNamesHash: shortDigest(calls.map(c => c?.name || '').join('|'), 12),
+      toolArgsHash: shortDigest(stableStringify(calls.map(c => c?.args ?? '')), 12),
+    };
+  }
+  if (role === 'tool_result') {
+    return {
+      role,
+      toolCallIdHash: shortDigest(turn.tool_call_id || '', 12),
+      contentBlocks: Array.isArray(turn.content) ? turn.content.length : 0,
+      contentHash: shortDigest(stableStringify(turn.content ?? null), 12),
+    };
+  }
+  return {
+    role,
+    contentBlocks: Array.isArray(turn?.content) ? turn.content.length : 0,
+    contentTypes: Array.isArray(turn?.content) ? turn.content.map(b => b?.type || 'unknown').join(',') : '',
+    contentHash: shortDigest(stableStringify(turn?.content ?? null), 12),
+  };
 }
 
 function buildKeyPayload({ messages, modelKey, callerKey, opts, scope }) {
@@ -530,6 +564,7 @@ export function fingerprintDebug(messages, modelKey = '', callerKey = '', opts =
     reason: payload ? 'ok' : 'payload_empty',
     projectedTurns: projection.turns.length,
     projectedHash: shortDigest(stableStringify(projection.turns), 12),
+    projectedTail: projection.turns.slice(-4).map(summarizeProjectedTurn),
     fp: payload ? sha256(payload).slice(0, 12) : '',
   };
 }

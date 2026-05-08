@@ -48,6 +48,34 @@ describe('fingerprintBefore', () => {
     assert.notEqual(fingerprintBefore(msgs1), fingerprintBefore(msgs2));
   });
 
+  it('ignores assistant narration only on tool_call turns', () => {
+    const withNarration = [
+      { role: 'user', content: 'inspect the repo' },
+      {
+        role: 'assistant',
+        content: 'I will read the files first.',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'Read', arguments: '{"file_path":"package.json"}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: '{"name":"windsurf-api"}' },
+      { role: 'user', content: 'continue' },
+    ];
+    const emptyContent = [
+      { role: 'user', content: 'inspect the repo' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'Read', arguments: '{"file_path":"package.json"}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: '{"name":"windsurf-api"}' },
+      { role: 'user', content: 'continue' },
+    ];
+    assert.equal(fingerprintBefore(withNarration, 'm', 'c'), fingerprintBefore(emptyContent, 'm', 'c'));
+  });
+
   it('changes when prior assistant tool_calls change (v2.0.25 semantic key)', () => {
     const msgs1 = [
       { role: 'user', content: 'hello' },
@@ -243,6 +271,37 @@ describe('fingerprintAfter', () => {
     );
   });
 
+  it('after(tool_call turn with narration) matches clients that replay empty assistant content', () => {
+    const afterAssistant = [
+      { role: 'user', content: 'inspect these files' },
+      {
+        role: 'assistant',
+        content: 'Reading both files now.',
+        tool_calls: [
+          { id: 'call_a', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.js"}' } },
+          { id: 'call_b', type: 'function', function: { name: 'read_file', arguments: '{"path":"b.js"}' } },
+        ],
+      },
+    ];
+    const beforeToolContinuation = [
+      { role: 'user', content: 'inspect these files' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_a', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.js"}' } },
+          { id: 'call_b', type: 'function', function: { name: 'read_file', arguments: '{"path":"b.js"}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_a', content: 'a.js contents' },
+      { role: 'tool', tool_call_id: 'call_b', content: 'b.js contents' },
+    ];
+    assert.equal(
+      fingerprintAfter(afterAssistant, 'm', 'c'),
+      fingerprintBefore(beforeToolContinuation, 'm', 'c')
+    );
+  });
+
   it('canonicalizes assistant tool_call arguments from common client shapes', () => {
     const nested = [
       { role: 'user', content: 'run command' },
@@ -307,6 +366,8 @@ describe('fingerprintDebug', () => {
     assert.ok(dbg.systemHash);
     assert.ok(dbg.toolsHash);
     assert.ok(dbg.projectedHash);
+    assert.ok(Array.isArray(dbg.projectedTail));
+    assert.ok(dbg.projectedTail.length > 0);
     assert.equal(JSON.stringify(dbg).includes('secret'), false);
     assert.equal(JSON.stringify(dbg).includes('hidden tool preamble'), false);
   });

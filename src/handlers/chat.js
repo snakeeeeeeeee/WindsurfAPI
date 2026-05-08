@@ -105,6 +105,42 @@ export function isUpstreamTransientError(err, isInternal = false) {
   return !!err && (isInternal || err.kind === 'transient_stall' || isCascadeTransportError(err));
 }
 
+function nonNegativeIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || String(raw).trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
+export function streamFastSwitchDecision({
+  elapsedMs,
+  fastSwitchBudgetMs,
+  attempt,
+  fastSwitchMaxAttempts,
+  isTransient,
+}) {
+  const budgetExhausted = Number(elapsedMs) >= Number(fastSwitchBudgetMs);
+  const maxSwitches = Math.max(0, Number(fastSwitchMaxAttempts) || 0);
+  const attemptExhausted = Number(attempt) >= maxSwitches;
+  const transientStallSwitchMax = Math.min(
+    maxSwitches,
+    nonNegativeIntEnv('WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS', 1),
+  );
+  const transientStallExhausted = !!isTransient && Number(attempt) >= transientStallSwitchMax;
+  return {
+    shouldRetry: !attemptExhausted && !transientStallExhausted && (!!isTransient || !budgetExhausted),
+    reason: attemptExhausted
+      ? 'attempt_exhausted'
+      : transientStallExhausted
+      ? 'transient_stall_switch_exhausted'
+      : budgetExhausted
+      ? 'budget_exhausted'
+      : 'retry_allowed',
+    budgetExhausted,
+    transientStallSwitchMax,
+  };
+}
+
 function shortHash(text) {
   return createHash('sha256').update(String(text || '')).digest('hex').slice(0, 16);
 }
@@ -114,7 +150,7 @@ function assistantTurnHash(text, toolCalls) {
     name: tc?.name || tc?.function?.name || '',
     argumentsHash: shortHash(tc?.argumentsJson || tc?.arguments || tc?.function?.arguments || ''),
   }));
-  return shortHash(JSON.stringify({ text: String(text || ''), tool_calls: calls }));
+  return shortHash(JSON.stringify({ text: calls.length ? '' : String(text || ''), tool_calls: calls }));
 }
 
 function shortFp(fp) {
@@ -144,7 +180,7 @@ function logCascadeReuseCheckin({
   const aliasPart = fpAfterAlias ? ` fpAlias=${shortFp(fpAfterAlias)}` : '';
   const ttlPart = Number.isFinite(ttlHint) && ttlHint > 0 ? ` ttlHintMs=${ttlHint}` : '';
   const afterDiag = fingerprintInfo && fingerprintInfo.ok
-    ? ` projectedHashAfter=${fingerprintInfo.projectedHash || ''} projectedTurnsAfter=${fingerprintInfo.projectedTurns ?? ''}`
+    ? ` projectedHashAfter=${fingerprintInfo.projectedHash || ''} projectedTurnsAfter=${fingerprintInfo.projectedTurns ?? ''} projectedTail=${JSON.stringify(fingerprintInfo.projectedTail || [])}`
     : '';
   log.info(
     `Chat[${reqId || 'unknown'}]: cascade reuse checkin mode=${mode || 'unknown'} ` +
@@ -3632,8 +3668,15 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               } else {
                 log.warn(`Account ${acct.email} failed (${tag}) on ${model}, trying next`);
               }
-              if (Date.now() - startTime >= fastSwitchBudgetMs || attempt >= fastSwitchMaxAttempts) {
-                log.warn(`availability: fast_switch budget exhausted for stream ${model} after ${attempt + 1} attempt(s)`);
+              const retryDecision = streamFastSwitchDecision({
+                elapsedMs: Date.now() - startTime,
+                fastSwitchBudgetMs,
+                attempt,
+                fastSwitchMaxAttempts,
+                isTransient,
+              });
+              if (!retryDecision.shouldRetry) {
+                log.warn(`availability: fast_switch ${retryDecision.reason} for stream ${model} after ${attempt + 1} attempt(s)`);
                 break;
               }
               continue;
