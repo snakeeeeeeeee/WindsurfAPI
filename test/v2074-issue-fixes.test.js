@@ -8,11 +8,18 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickWarmStallCeiling, __TEST_CASCADE_TIMEOUTS } from '../src/client.js';
+import { cascadePollDelayForElapsed, pickWarmStallCeiling, __TEST_CASCADE_TIMEOUTS } from '../src/client.js';
 import { fingerprintBefore } from '../src/conversation-pool.js';
 
 describe('#122 — pickWarmStallCeiling tier ordering', () => {
   const T = { warmStallMs: 45_000, warmStallThinkingMs: 120_000, warmStallToolActiveMs: 180_000 };
+  const POLL_T = {
+    pollIntervalMs: 500,
+    pollFastMs: 100,
+    pollFastUntilMs: 2000,
+    pollMidMs: 250,
+    pollMidUntilMs: 8000,
+  };
 
   it('text-only baseline is the new 45s default (was 25s pre-v2.0.74)', () => {
     assert.equal(pickWarmStallCeiling({ totalThinking: 0, toolCallCount: 0 }, T), 45_000);
@@ -38,6 +45,30 @@ describe('#122 — pickWarmStallCeiling tier ordering', () => {
     assert.ok(__TEST_CASCADE_TIMEOUTS.warmStallMs >= 30_000, 'baseline at least 30s');
     assert.ok(__TEST_CASCADE_TIMEOUTS.warmStallThinkingMs > __TEST_CASCADE_TIMEOUTS.warmStallMs);
     assert.ok(__TEST_CASCADE_TIMEOUTS.warmStallToolActiveMs > __TEST_CASCADE_TIMEOUTS.warmStallThinkingMs);
+  });
+
+  it('uses faster polling near the beginning of a cascade and backs off later', () => {
+    assert.equal(cascadePollDelayForElapsed(0, POLL_T), 100);
+    assert.equal(cascadePollDelayForElapsed(1999, POLL_T), 100);
+    assert.equal(cascadePollDelayForElapsed(2000, POLL_T), 250);
+    assert.equal(cascadePollDelayForElapsed(7999, POLL_T), 250);
+    assert.equal(cascadePollDelayForElapsed(8000, POLL_T), 500);
+  });
+
+  it('reads cascade polling env overrides at call time', () => {
+    const prevFast = process.env.CASCADE_POLL_FAST_MS;
+    const prevFastUntil = process.env.CASCADE_POLL_FAST_UNTIL_MS;
+    try {
+      process.env.CASCADE_POLL_FAST_MS = '75';
+      process.env.CASCADE_POLL_FAST_UNTIL_MS = '1000';
+      assert.equal(cascadePollDelayForElapsed(0), 75);
+      assert.equal(cascadePollDelayForElapsed(999), 75);
+    } finally {
+      if (prevFast === undefined) delete process.env.CASCADE_POLL_FAST_MS;
+      else process.env.CASCADE_POLL_FAST_MS = prevFast;
+      if (prevFastUntil === undefined) delete process.env.CASCADE_POLL_FAST_UNTIL_MS;
+      else process.env.CASCADE_POLL_FAST_UNTIL_MS = prevFastUntil;
+    }
   });
 });
 

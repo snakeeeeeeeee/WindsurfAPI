@@ -476,6 +476,52 @@ export function fingerprintAfter(messages, modelKey = '', callerKey = '', opts =
   }));
 }
 
+export function fingerprintDebug(messages, modelKey = '', callerKey = '', opts = {}, scope = 'before') {
+  const totalMessages = Array.isArray(messages) ? messages.length : 0;
+  const systemMessages = Array.isArray(messages) ? messages.filter(m => m?.role === 'system').length : 0;
+  const userMessages = Array.isArray(messages) ? messages.filter(m => m?.role === 'user').length : 0;
+  const assistantMessages = Array.isArray(messages) ? messages.filter(m => m?.role === 'assistant').length : 0;
+  const toolMessages = Array.isArray(messages) ? messages.filter(m => m?.role === 'tool').length : 0;
+  const base = {
+    scope,
+    model: String(modelKey || ''),
+    callerHash: shortDigest(callerKey || '', 12),
+    route: opts?.route || 'chat',
+    totalMessages,
+    systemMessages,
+    userMessages,
+    assistantMessages,
+    toolMessages,
+    systemHash: systemDigest(messages).slice(0, 12),
+    toolsHash: toolContextDigest(opts).slice(0, 12),
+    toolCount: Array.isArray(opts?.tools) ? opts.tools.length : 0,
+    toolPreambleHash: opts?.toolPreamble ? shortDigest(opts.toolPreamble, 12) : '',
+    preambleTier: opts?.preambleTier || '',
+  };
+  if (!Array.isArray(messages)) return { ...base, ok: false, reason: 'messages_not_array' };
+  const turnSlice = scope === 'after' ? messages : priorTurnsForBefore(messages);
+  if (!turnSlice) {
+    const hasNewest = messages.some(m => m?.role === 'user' || m?.role === 'tool');
+    return {
+      ...base,
+      ok: false,
+      reason: hasNewest ? 'no_prior_turn_before_latest_user_or_tool' : 'no_user_or_tool_turn',
+    };
+  }
+  const projection = projectTurns(turnSlice);
+  if (!projection) return { ...base, ok: false, reason: 'projection_failed', projectedTurns: 0 };
+  if (projection.unhashable) return { ...base, ok: false, reason: 'unhashable_media', projectedTurns: 0 };
+  const payload = buildKeyPayload({ messages, modelKey, callerKey, opts, scope });
+  return {
+    ...base,
+    ok: !!payload,
+    reason: payload ? 'ok' : 'payload_empty',
+    projectedTurns: projection.turns.length,
+    projectedHash: shortDigest(stableStringify(projection.turns), 12),
+    fp: payload ? sha256(payload).slice(0, 12) : '',
+  };
+}
+
 function effectiveTtl(entry) {
   const hint = Number(entry?.ttlHintMs);
   return Number.isFinite(hint) && hint > 0 ? hint : POOL_TTL_MS;

@@ -168,6 +168,47 @@ function positiveIntEnv(name, fallback) {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function boolEnv(name) {
+  return /^(1|true|yes|on)$/i.test(String(process.env[name] || '').trim());
+}
+
+function dumpCascadePromptForDebug({
+  cascadeId,
+  modelUid,
+  sessionId,
+  text,
+  toolPreamble,
+  images,
+  nativeMode,
+  nativeAllowlist,
+  additionalSteps,
+  isResume,
+  historyCoverage,
+}) {
+  if (!boolEnv('CASCADE_DEBUG_DUMP_PROMPT')) return;
+  log.warn('Cascade prompt dump BEGIN', {
+    cascadeId: String(cascadeId || '').slice(0, 8),
+    modelUid,
+    sessionId,
+    textChars: text?.length || 0,
+    toolPreambleChars: toolPreamble?.length || 0,
+    imageCount: Array.isArray(images) ? images.length : 0,
+    nativeMode: !!nativeMode,
+    nativeAllowlist,
+    additionalSteps: Array.isArray(additionalSteps) ? additionalSteps.length : 0,
+    isResume: !!isResume,
+    historyCoverage,
+  });
+  log.warn(`Cascade prompt dump TEXT BEGIN\n${text || ''}\nCascade prompt dump TEXT END`);
+  if (toolPreamble) {
+    log.warn(`Cascade prompt dump TOOL_PREAMBLE BEGIN\n${toolPreamble}\nCascade prompt dump TOOL_PREAMBLE END`);
+  }
+  if (Array.isArray(additionalSteps) && additionalSteps.length) {
+    log.warn(`Cascade prompt dump ADDITIONAL_STEPS BEGIN\n${JSON.stringify(additionalSteps, null, 2)}\nCascade prompt dump ADDITIONAL_STEPS END`);
+  }
+  log.warn('Cascade prompt dump END');
+}
+
 function cascadeHistoryBudget(modelUid) {
   // Default 400KB — long conversations (100+ turns with tool results)
   // easily hit the old 200KB limit, causing silent context amputation.
@@ -188,6 +229,10 @@ const CASCADE_TIMEOUTS = {
   // warm stall still exits stuck cascades.
   maxWaitMs:        positiveIntEnv('CASCADE_MAX_WAIT_MS', 600_000),
   pollIntervalMs:   positiveIntEnv('CASCADE_POLL_INTERVAL_MS', 500),
+  pollFastMs:       positiveIntEnv('CASCADE_POLL_FAST_MS', 150),
+  pollFastUntilMs:  positiveIntEnv('CASCADE_POLL_FAST_UNTIL_MS', 4_000),
+  pollMidMs:        positiveIntEnv('CASCADE_POLL_MID_MS', 300),
+  pollMidUntilMs:   positiveIntEnv('CASCADE_POLL_MID_UNTIL_MS', 15_000),
   coldStallBaseMs:  positiveIntEnv('CASCADE_COLD_STALL_BASE_MS', 30_000),
   // v2.0.74 (#122 zhangzhang-bit): bumped 25s → 45s. zhangzhang reported
   // a real-world cascade that finishes around 30s consistently getting
@@ -223,6 +268,29 @@ const CASCADE_TIMEOUTS = {
 
 export function shouldColdStall({ elapsed, coldStallMs, sawActive, sawText, totalThinking, toolCallCount }) {
   return elapsed > coldStallMs && sawActive && !sawText && (totalThinking || 0) === 0 && (toolCallCount || 0) === 0;
+}
+
+export function cascadePollDelayForElapsed(elapsedMs = 0, timeouts = CASCADE_TIMEOUTS) {
+  const effective = timeouts === CASCADE_TIMEOUTS
+    ? {
+        pollIntervalMs: positiveIntEnv('CASCADE_POLL_INTERVAL_MS', CASCADE_TIMEOUTS.pollIntervalMs || 500),
+        pollFastMs: positiveIntEnv('CASCADE_POLL_FAST_MS', CASCADE_TIMEOUTS.pollFastMs || 150),
+        pollFastUntilMs: positiveIntEnv('CASCADE_POLL_FAST_UNTIL_MS', CASCADE_TIMEOUTS.pollFastUntilMs || 4_000),
+        pollMidMs: positiveIntEnv('CASCADE_POLL_MID_MS', CASCADE_TIMEOUTS.pollMidMs || 300),
+        pollMidUntilMs: positiveIntEnv('CASCADE_POLL_MID_UNTIL_MS', CASCADE_TIMEOUTS.pollMidUntilMs || 15_000),
+      }
+    : timeouts;
+  const base = Math.max(1, Number(effective.pollIntervalMs) || 500);
+  const elapsed = Math.max(0, Number(elapsedMs) || 0);
+  const fastUntil = Math.max(0, Number(effective.pollFastUntilMs) || 0);
+  const midUntil = Math.max(fastUntil, Number(effective.pollMidUntilMs) || 0);
+  if (fastUntil && elapsed < fastUntil) {
+    return Math.max(1, Math.min(base, Number(effective.pollFastMs) || base));
+  }
+  if (midUntil && elapsed < midUntil) {
+    return Math.max(1, Math.min(base, Number(effective.pollMidMs) || base));
+  }
+  return base;
 }
 
 // v2.0.74 (#122). Three-tier ceiling picker for warm-stall detection.
@@ -514,6 +582,7 @@ export class WindsurfClient {
    * @param {object} opts - { onChunk, onEnd, onError }
    */
   async cascadeChat(messages, modelEnum, modelUid, opts = {}) {
+    const requestStartTime = Date.now();
     let {
       onChunk, onEnd, onError, signal, reuseEntry, toolPreamble, displayModel,
       // v2.0.65 native tool bridge handles. When nativeMode=true the
@@ -532,6 +601,7 @@ export class WindsurfClient {
     // LS startup). Falls back to a local session id if the LS entry is gone.
     const lsEntry = getLsEntryByPort(this.port);
     await this.warmupCascade();
+    const warmupDoneAt = Date.now();
     let sessionId = reuseEntry?.sessionId || lsEntry?.sessionId || randomUUID();
 
     // "panel state not found" means the LS forgot the panel for our sessionId
@@ -554,9 +624,13 @@ export class WindsurfClient {
     try {
       // Step 1: Start cascade — with retry on panel-state-not-found
       let cascadeId;
+      let openDoneAt = 0;
+      let firstOpenDoneAt = 0;
       const openCascade = async () => {
         if (reuseEntry?.cascadeId) {
           log.debug(`Cascade resumed: ${reuseEntry.cascadeId}`);
+          openDoneAt = Date.now();
+          if (!firstOpenDoneAt) firstOpenDoneAt = openDoneAt;
           return reuseEntry.cascadeId;
         }
         const startProto = buildStartCascadeRequest(this.apiKey, sessionId);
@@ -566,6 +640,8 @@ export class WindsurfClient {
         const id = parseStartCascadeResponse(startResp);
         if (!id) throw new Error('StartCascade returned empty cascade_id');
         log.debug(`Cascade started: ${id}`);
+        openDoneAt = Date.now();
+        if (!firstOpenDoneAt) firstOpenDoneAt = openDoneAt;
         return id;
       };
       try {
@@ -615,6 +691,7 @@ export class WindsurfClient {
         }
       }
 
+      const promptBuildStartAt = Date.now();
       let text;
       let images = [];
       const systemMsgs = messages.filter(m => m.role === 'system');
@@ -690,6 +767,20 @@ export class WindsurfClient {
         if (sysText) text = sysText + '\n\n' + text;
       }
       if (images.length) log.info(`Cascade: attaching ${images.length} image(s) to field 6`);
+      const promptReadyAt = Date.now();
+      dumpCascadePromptForDebug({
+        cascadeId,
+        modelUid,
+        sessionId,
+        text,
+        toolPreamble,
+        images,
+        nativeMode,
+        nativeAllowlist,
+        additionalSteps,
+        isResume,
+        historyCoverage,
+      });
 
       // Step 2: Send message. Retry up to MAX_PANEL_RETRIES on
       // "panel state not found" — we've seen clients that push a 30KB+
@@ -732,9 +823,11 @@ export class WindsurfClient {
       let panelRetry = 0;
       let historyRebuilt = false;
       let cascadeExpiredOnce = false;
+      let sendDoneAt = 0;
       while (true) {
         try {
           await sendMessage();
+          sendDoneAt = Date.now();
           break;
         } catch (e) {
           const expired = isExpiredCascade(e);
@@ -781,6 +874,7 @@ export class WindsurfClient {
           );
           cascadeId = parseStartCascadeResponse(startResp);
           if (!cascadeId) throw new Error('StartCascade returned empty cascade_id after re-warm');
+          openDoneAt = Date.now();
           // This is now a fresh cascade carrying full rebuilt history, not a
           // continuation of the expired trajectory. Poll from the beginning.
           reuseEntry = null;
@@ -816,6 +910,17 @@ export class WindsurfClient {
       let sawActive = false;   // true once we've seen a non-IDLE status
       let sawText = false;     // true once at least one PLANNER_RESPONSE with text arrived
       let lastStatus = -1;
+      let firstChunkAt = 0;
+      let firstTextAt = 0;
+      let firstThinkingAt = 0;
+      let firstToolAt = 0;
+      const markFirstChunk = (kind) => {
+        const now = Date.now();
+        if (!firstChunkAt) firstChunkAt = now;
+        if (kind === 'text' && !firstTextAt) firstTextAt = now;
+        if (kind === 'thinking' && !firstThinkingAt) firstThinkingAt = now;
+        if (kind === 'tool' && !firstToolAt) firstToolAt = now;
+      };
       // "Progress" is ANY forward motion on the trajectory — text, thinking,
       // new tool call, or a new step appearing. Using this (instead of text
       // alone) for stall detection fixes the false-positive warm stalls where
@@ -825,10 +930,12 @@ export class WindsurfClient {
       const { maxWaitMs: maxWait, pollIntervalMs: pollInterval, idleGraceMs: IDLE_GRACE_MS, warmStallMs: NO_GROWTH_STALL_MS, stallRetryMinText: STALL_RETRY_MIN_TEXT } = CASCADE_TIMEOUTS;
       const startTime = Date.now();
       let endReason = 'unknown';
+      let lastPollDelay = pollInterval;
 
       while (Date.now() - startTime < maxWait) {
         if (aborted()) { endReason = 'aborted'; break; }
-        await new Promise(r => setTimeout(r, pollInterval));
+        lastPollDelay = cascadePollDelayForElapsed(Date.now() - startTime);
+        await new Promise(r => setTimeout(r, lastPollDelay));
         if (aborted()) { endReason = 'aborted'; break; }
         pollCount++;
 
@@ -924,6 +1031,7 @@ export class WindsurfClient {
               if (tc.cascade_native) {
                 const chunk = { text: '', thinking: '', isError: false, nativeToolCall: tc };
                 chunks.push(chunk);
+                markFirstChunk('tool');
                 onChunk?.(chunk);
               }
             }
@@ -946,6 +1054,7 @@ export class WindsurfClient {
               lastGrowthAt = Date.now();
               const tchunk = { text: '', thinking: thinkDelta, isError: false };
               chunks.push(tchunk);
+              markFirstChunk('thinking');
               onChunk?.(tchunk);
             }
           }
@@ -971,6 +1080,7 @@ export class WindsurfClient {
             sawText = true;
             const chunk = { text: delta, thinking: '', isError: false };
             chunks.push(chunk);
+            markFirstChunk('text');
             onChunk?.(chunk);
           }
         }
@@ -1042,7 +1152,7 @@ export class WindsurfClient {
           idleCount++;
           // Require at least a little text OR a long idle streak before
           // accepting "done", so we don't race the first visible chunk.
-          const growthSettled = (Date.now() - lastGrowthAt) > pollInterval * 2;
+          const growthSettled = (Date.now() - lastGrowthAt) > lastPollDelay * 2;
           const canBreak = sawText ? (idleCount >= 2 && growthSettled) : idleCount >= 4;
           if (canBreak) {
             // Final sweep
@@ -1063,6 +1173,7 @@ export class WindsurfClient {
                 yieldedByStep.set(i, responseText.length);
                 totalYielded += delta.length;
                 chunks.push({ text: delta, thinking: '', isError: false });
+                markFirstChunk('text');
                 onChunk?.({ text: delta, thinking: '', isError: false });
               }
 
@@ -1077,6 +1188,7 @@ export class WindsurfClient {
                 yieldedByStep.set(i, modifiedText.length);
                 totalYielded += delta.length;
                 chunks.push({ text: delta, thinking: '', isError: false });
+                markFirstChunk('text');
                 onChunk?.({ text: delta, thinking: '', isError: false });
               }
             }
@@ -1088,6 +1200,7 @@ export class WindsurfClient {
         }
       }
       if (endReason === 'unknown') endReason = 'max_wait';
+      const pollDoneAt = Date.now();
 
       // Structured summary so we can diagnose short/empty completions after
       // the fact. sawActive=false + sawText=false + idle_empty = the planner
@@ -1103,7 +1216,19 @@ export class WindsurfClient {
         sawActive,
         sawText,
         lastStatus,
-        ms: Date.now() - startTime,
+        firstChunkMs: firstChunkAt ? firstChunkAt - startTime : null,
+        firstTextMs: firstTextAt ? firstTextAt - startTime : null,
+        firstThinkingMs: firstThinkingAt ? firstThinkingAt - startTime : null,
+        firstToolMs: firstToolAt ? firstToolAt - startTime : null,
+        firstChunkTotalMs: firstChunkAt ? firstChunkAt - requestStartTime : null,
+        firstTextTotalMs: firstTextAt ? firstTextAt - requestStartTime : null,
+        warmupMs: warmupDoneAt - requestStartTime,
+        openMs: firstOpenDoneAt ? firstOpenDoneAt - warmupDoneAt : null,
+        promptBuildMs: promptReadyAt - promptBuildStartAt,
+        sendMs: sendDoneAt ? sendDoneAt - promptReadyAt : null,
+        pollMs: pollDoneAt - startTime,
+        ms: pollDoneAt - startTime,
+        totalMs: pollDoneAt - requestStartTime,
       };
       if (totalYielded < 20 && endReason !== 'aborted') {
         log.warn('Cascade short reply', summary);
@@ -1177,6 +1302,16 @@ export class WindsurfClient {
         : null;
       chunks.toolCalls = toolCalls;
       chunks.usage = serverUsage;
+      chunks.firstChunkMs = firstChunkAt ? firstChunkAt - requestStartTime : null;
+      chunks.firstTextMs = firstTextAt ? firstTextAt - requestStartTime : null;
+      chunks.timings = {
+        warmupMs: warmupDoneAt - requestStartTime,
+        openMs: firstOpenDoneAt ? firstOpenDoneAt - warmupDoneAt : null,
+        promptBuildMs: promptReadyAt - promptBuildStartAt,
+        sendMs: sendDoneAt ? sendDoneAt - promptReadyAt : null,
+        pollMs: pollDoneAt - startTime,
+        totalMs: pollDoneAt - requestStartTime,
+      };
       // v2.0.25 HIGH-2: surface "the original reuse entry was dead and we
       // recovered with a fresh cascade" so the caller skips checking the dead
       // entry back into the pool. The new cascadeId we attached above is the

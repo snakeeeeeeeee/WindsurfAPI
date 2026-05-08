@@ -12,3 +12,11 @@
 
 - 默认高可用策略应该是被动学习：真实成功写健康，真实限流写 CD，代理失败触发换 IP。
 - 动态代理 worker 必须独立于 availability worker；关闭模型探测时，代理自动续期/失败重绑仍要运行。
+
+## 2026-05-08 真实缓存复用 / TTFT 结论
+
+- 用户真实日志已经出现过 `stream reuse ... HIT`，所以“跨轮一定 MISS / conversation-pool 需要整套重写”不成立。
+- 之前 Claude 声称已修改 `src/conversation-pool.js`、双锚定 cache_control、跑过 66/66，是未被 git diff 支持的说法。
+- CCTest 报告可被 report-only usage 影响，但真实使用场景不应靠改写 usage 解决；保留 `upstream` 才能反映真实上游 cache_read/cache_write。
+- 长文本首字慢有两部分：真实模型/上游首 chunk 产生时间，以及本地 Cascade polling 抓到首 chunk 的等待时间。自适应 early polling 只能降低后者，不能保证 `<1s`。
+- 真实低命中排查应看 reuse MISS 细节里的 `systemHash`、`toolsHash`、`callerHash`、`projectedHash`，判断是 system/tools/caller/history 哪个维度漂移。

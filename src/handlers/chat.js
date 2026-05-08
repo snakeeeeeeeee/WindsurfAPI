@@ -21,6 +21,7 @@ import { markDynamicProxyFailure } from '../dynamic-proxy.js';
 import { isProxyError } from '../proxy-test.js';
 import {
   fingerprintBefore, fingerprintAfter, checkout as poolCheckout, checkin as poolCheckin,
+  fingerprintDebug,
 } from '../conversation-pool.js';
 import {
   normalizeMessagesForCascade, ToolCallStreamParser, parseToolCallsFromText, stripToolMarkupFromText,
@@ -1968,6 +1969,9 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // "model keeps re-analysing the same data" loops.
   if (reuseEnabled) {
     log.info(`Chat[${reqId}]: reuse fp=${fpBefore?.slice(0, 12) || 'none'} ${reuseEntry ? `HIT cascade=${reuseEntry.cascadeId.slice(0, 8)}` : 'MISS'} ${callerDiag} turns=${(messages || []).length} chars=${messageChars} strict=${strictReuse ? 1 : 0} model=${routingModelKey}`);
+    if (!reuseEntry) {
+      log.info(`Chat[${reqId}]: reuse MISS detail`, fingerprintDebug(messages, routingModelKey, callerKey, fpOpts, 'before'));
+    }
   } else if (sharedApiKeyNoScope) {
     log.info(`Chat[${reqId}]: reuse DISABLED (shared API key, no per-user scope) ${callerDiag} turns=${(messages || []).length} chars=${messageChars} strict=${strictReuse ? 1 : 0}`);
   } else if (!shouldUseCascadeReuse({ useCascade, emulateTools, modelKey: routingModelKey })) {
@@ -2932,6 +2936,9 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       let reuseEntryDead = false;
       if (reuseEnabled) {
         log.info(`Chat[${reqId}]: stream reuse fp=${fpBefore?.slice(0, 12) || 'none'} ${reuseEntry ? `HIT cascade=${reuseEntry.cascadeId.slice(0, 8)}` : 'MISS'} ${callerDiag} turns=${(messages || []).length} chars=${messageChars} strict=${strictReuse ? 1 : 0} model=${modelKey}`);
+        if (!reuseEntry) {
+          log.info(`Chat[${reqId}]: stream reuse MISS detail`, fingerprintDebug(messages, modelKey, callerKey, fpOpts, 'before'));
+        }
       } else if (sharedApiKeyNoScopeStream) {
         log.info(`Chat[${reqId}]: stream reuse DISABLED (shared API key, no per-user scope) ${callerDiag} turns=${(messages || []).length} chars=${messageChars} strict=${strictReuse ? 1 : 0}`);
       } else if (!shouldUseCascadeReuse({ useCascade, emulateTools, modelKey })) {

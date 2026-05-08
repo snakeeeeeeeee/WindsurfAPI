@@ -17,6 +17,12 @@ const BUSINESS_ENV_KEYS = [
   'WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE',
   'CASCADE_REUSE_HASH_SYSTEM',
   'CASCADE_REUSE_ALLOW_SHARED_API_KEY',
+  'CASCADE_POLL_INTERVAL_MS',
+  'CASCADE_POLL_FAST_MS',
+  'CASCADE_POLL_FAST_UNTIL_MS',
+  'CASCADE_POLL_MID_MS',
+  'CASCADE_POLL_MID_UNTIL_MS',
+  'CASCADE_DEBUG_DUMP_PROMPT',
 ];
 
 let tmp;
@@ -72,6 +78,8 @@ describe('runtime-config SQLite defaults', () => {
     process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES = 'public-a=internal-a';
     process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'hybrid';
     process.env.CASCADE_REUSE_HASH_SYSTEM = '0';
+    process.env.CASCADE_POLL_FAST_MS = '150';
+    process.env.CASCADE_DEBUG_DUMP_PROMPT = '1';
 
     const runtime = await loadRuntime();
 
@@ -80,6 +88,8 @@ describe('runtime-config SQLite defaults', () => {
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'public-a=internal-a');
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, 'hybrid');
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_REUSE_HASH_SYSTEM, '0');
+    assert.equal(runtime.getBusinessEnvConfig().CASCADE_POLL_FAST_MS, '150');
+    assert.equal(runtime.getBusinessEnvConfig().CASCADE_DEBUG_DUMP_PROMPT, '1');
   });
 
   it('keeps existing SQLite business env authoritative over later env changes', async () => {
@@ -105,19 +115,29 @@ describe('runtime-config SQLite defaults', () => {
     runtime.setBusinessEnvConfig({
       WINDSURFAPI_PUBLIC_MODEL_ALIASES: 'runtime=target',
       WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS: 'hybrid',
+      CASCADE_POLL_INTERVAL_MS: '500',
+      CASCADE_DEBUG_DUMP_PROMPT: '1',
     });
     assert.equal(process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'runtime=target');
     assert.equal(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, 'hybrid');
+    assert.equal(process.env.CASCADE_POLL_INTERVAL_MS, '500');
+    assert.equal(process.env.CASCADE_DEBUG_DUMP_PROMPT, '1');
 
     runtime.setBusinessEnvConfig({
       WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS: '',
+      CASCADE_POLL_INTERVAL_MS: '',
+      CASCADE_DEBUG_DUMP_PROMPT: '',
     });
     runtime = await loadRuntime();
 
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'runtime=target');
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, undefined);
+    assert.equal(runtime.getBusinessEnvConfig().CASCADE_POLL_INTERVAL_MS, undefined);
+    assert.equal(runtime.getBusinessEnvConfig().CASCADE_DEBUG_DUMP_PROMPT, undefined);
     assert.equal(process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'runtime=target');
     assert.equal(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, undefined);
+    assert.equal(process.env.CASCADE_POLL_INTERVAL_MS, undefined);
+    assert.equal(process.env.CASCADE_DEBUG_DUMP_PROMPT, undefined);
   });
 
   it('migrates only untouched legacy aggressive availability defaults to passive defaults', async () => {

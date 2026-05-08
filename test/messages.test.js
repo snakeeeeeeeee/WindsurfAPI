@@ -758,6 +758,91 @@ describe('Anthropic messages request translation', () => {
     }
   });
 
+  it('matches an earlier cached prefix even when later turns add more than 20 block boundaries (regression for legacy lookback window)', async () => {
+    // Before this fix, `extractAnthropicCacheBreakpoints` only exposed the
+    // last 20 prior boundaries as hit candidates. Once a follow-up request
+    // grew the boundary count past that window, the original cached prefix
+    // at the top of the conversation could no longer be matched, so the
+    // official-reported-usage path reported a miss even though the shared
+    // prefix was still present verbatim.
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+    const prevTailRatio = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'official';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO = '0.1';
+    try {
+      const stableSystem = 'Stable long-history system prefix. '.repeat(120);
+      const firstPayload = 'Cached payload from round one. '.repeat(120);
+
+      // R1 caches the prefix at the end of the first user turn.
+      const r1 = {
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: stableSystem }],
+        messages: [{
+          role: 'user',
+          content: [{ type: 'text', text: firstPayload, cache_control: { type: 'ephemeral' } }],
+        }],
+      };
+
+      // R2 keeps the R1 user turn verbatim, then appends 12 short
+      // assistant/user follow-ups (24 extra block boundaries, pushing the
+      // R1 breakpoint far beyond the legacy 20-boundary lookback window),
+      // and re-marks the fresh tail.
+      const followUps = [];
+      for (let i = 0; i < 12; i++) {
+        followUps.push({ role: 'assistant', content: `assistant follow-up ${i}` });
+        followUps.push({ role: 'user', content: `user follow-up ${i}` });
+      }
+      const r2 = {
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: stableSystem }],
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: firstPayload }] },
+          ...followUps,
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'R2 tail audit payload. '.repeat(40), cache_control: { type: 'ephemeral' } }],
+          },
+        ],
+      };
+
+      const context = {
+        callerKey: 'api:long-history-key',
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: { prompt_tokens: 100000, completion_tokens: 10000, total_tokens: 110000 },
+            },
+          };
+        },
+      };
+
+      const first = await handleMessages(r1, context);
+      const second = await handleMessages(r2, context);
+
+      assert.equal(first.body.usage.cache_read_input_tokens, 0);
+      assert.ok(first.body.usage.cache_creation_input_tokens > 0);
+      assert.ok(
+        second.body.usage.cache_read_input_tokens > 0,
+        'expected R2 to hit R1 cached prefix despite >20 intervening block boundaries',
+      );
+      assert.equal(
+        second.body.usage.cache_read_input_tokens,
+        first.body.usage.cache_creation_input_tokens,
+      );
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
+      if (prevTailRatio === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO = prevTailRatio;
+    }
+  });
+
   it('hybrid reported usage preserves upstream cache reads when Cascade already reports a hit', async () => {
     const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
     const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;

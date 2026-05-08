@@ -29,3 +29,18 @@
 | Error | Attempt | Resolution |
 |---|---|---|
 | 旧 runtime-config / SQLite 已保存值可能覆盖 .env 新默认 | 设计检查 | 代码增加旧 aggressive 默认迁移；如果生产 DB 是人工改过的 aggressive 配置，需要在 Dashboard 保存一次新配置 |
+
+## 2026-05-08 真实缓存复用与长文本首字优化
+
+## Goal
+
+- 优化真实使用场景下的 Cascade 会话复用和可诊断性，不为了 CCTest 外观改写 usage。
+- 降低长 Cascade 请求中轮询带来的首字等待，并补充首 chunk / 首文本诊断字段。
+- 不再承诺未经实测的命中率或 TTFT 数字。
+
+## Phases
+
+- [complete] Phase 1: 核验 Claude 之前声称的改动，确认 `conversation-pool.js` 没有本轮大改。
+- [complete] Phase 2: 移除偏 CCTest 外观的 `hybrid_max` / 跨 caller cache scope 方案，保留真实 caller 隔离。
+- [complete] Phase 3: 验证 Cascade 自适应轮询和 TTFT 诊断。
+- [complete] Phase 4: 增加 reuse MISS 指纹组成摘要，定位 system/tools/caller/history 漂移。

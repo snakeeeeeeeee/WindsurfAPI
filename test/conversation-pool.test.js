@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { fingerprintBefore, fingerprintAfter, checkout, checkin, poolStats, poolClear, invalidateFor } from '../src/conversation-pool.js';
+import { fingerprintBefore, fingerprintAfter, fingerprintDebug, checkout, checkin, poolStats, poolClear, invalidateFor } from '../src/conversation-pool.js';
 
 describe('fingerprintBefore', () => {
   it('returns null for single-message conversations', () => {
@@ -214,6 +214,42 @@ describe('fingerprintAfter', () => {
       fingerprintAfter(turn1, 'm', 'c'),
       fingerprintBefore(turn2, 'm', 'c')
     );
+  });
+});
+
+describe('fingerprintDebug', () => {
+  it('summarizes fingerprint inputs without exposing prompt text', () => {
+    const msgs = [
+      { role: 'system', content: 'secret system text' },
+      { role: 'user', content: 'secret user text' },
+      { role: 'assistant', content: 'secret assistant text' },
+      { role: 'user', content: 'next' },
+    ];
+    const dbg = fingerprintDebug(msgs, 'claude-opus-4.7', 'caller-secret', {
+      emulateTools: true,
+      tools: [{ function: { name: 'read_file', description: 'Read file', parameters: { type: 'object' } } }],
+      toolPreamble: 'hidden tool preamble',
+      preambleTier: 'skinny',
+      route: 'messages',
+    });
+    assert.equal(dbg.ok, true);
+    assert.equal(dbg.reason, 'ok');
+    assert.equal(dbg.totalMessages, 4);
+    assert.equal(dbg.systemMessages, 1);
+    assert.equal(dbg.toolCount, 1);
+    assert.equal(dbg.preambleTier, 'skinny');
+    assert.ok(dbg.fp);
+    assert.ok(dbg.systemHash);
+    assert.ok(dbg.toolsHash);
+    assert.ok(dbg.projectedHash);
+    assert.equal(JSON.stringify(dbg).includes('secret'), false);
+    assert.equal(JSON.stringify(dbg).includes('hidden tool preamble'), false);
+  });
+
+  it('reports why a single-turn request cannot reuse a cascade', () => {
+    const dbg = fingerprintDebug([{ role: 'user', content: 'hi' }], 'm', 'c');
+    assert.equal(dbg.ok, false);
+    assert.equal(dbg.reason, 'no_prior_turn_before_latest_user_or_tool');
   });
 });
 

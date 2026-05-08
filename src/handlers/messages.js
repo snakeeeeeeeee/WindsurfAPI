@@ -334,7 +334,13 @@ function estimateMessageTokens(message) {
   return 4 + estimateAnthropicContentTokens(message?.content);
 }
 
-const ANTHROPIC_CACHE_PREFIX_LOOKBACK_BLOCKS = 20;
+// Every prior boundary in the request is a candidate prefix hash, so a
+// current-request breakpoint can match a cache entry stored by a prior
+// request that placed its own breakpoint anywhere earlier in the common
+// prefix (not just within the last N blocks). The candidate list is
+// consumed immediately inside buildOfficialReportedUsageCandidate and the
+// map lookups are O(1), so the iteration cost stays well under 1 ms even
+// for multi-hundred-block conversations.
 
 function extractAnthropicCacheBreakpoints(body) {
   const segments = [];
@@ -364,8 +370,7 @@ function extractAnthropicCacheBreakpoints(body) {
   const pushBreakpoint = (ttl) => {
     if (!parts.length) return;
     const exact = boundaries[boundaries.length - 1] || prefixAtCurrentBoundary();
-    const previousStart = Math.max(0, boundaries.length - 1 - ANTHROPIC_CACHE_PREFIX_LOOKBACK_BLOCKS);
-    const previous = boundaries.slice(previousStart, Math.max(0, boundaries.length - 1));
+    const previous = boundaries.slice(0, Math.max(0, boundaries.length - 1));
     segments.push({
       ttl: ttl === '1h' ? '1h' : '5m',
       tokens: exact.tokens,
