@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import {
   getAccountList, getAccountCount, addAccountByKey, addAccountByToken,
   removeAccount, setAccountStatus, resetAccountErrors, updateAccountLabel,
-  isAuthenticated, probeAccount, ensureLsForAccount,
+  isAuthenticated, probeAccount, refreshAccountStatusOnly, ensureLsForAccount,
   refreshCredits, refreshAllCredits,
   setAccountBlockedModels, setAccountTokens, setAccountTier,
   clearAccountRateLimit,
@@ -780,14 +780,16 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
   }
 
-  // POST /accounts/probe-all — probe every active account
+  // POST /accounts/probe-all — safely refresh every active account's
+  // authoritative status. Full model probes burn upstream message quota and
+  // can push an entire Trial/Pro pool into cooldown when run in bulk.
   if (subpath === '/accounts/probe-all' && method === 'POST') {
     const list = getAccountList().filter(a => a.status === 'active');
     const results = [];
     for (const a of list) {
       try {
-        const r = await probeAccount(a.id);
-        results.push({ id: a.id, email: a.email, tier: r?.tier || 'unknown' });
+        const r = await refreshAccountStatusOnly(a.id);
+        results.push({ id: a.id, email: a.email, tier: r?.tier || 'unknown', statusOnly: true });
       } catch (err) {
         results.push({ id: a.id, email: a.email, error: err.message });
       }
@@ -799,7 +801,8 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   const accountProbe = subpath.match(/^\/accounts\/([^/]+)\/probe$/);
   if (accountProbe && method === 'POST') {
     try {
-      const result = await probeAccount(accountProbe[1]);
+      const probeOptions = body?.fullModelProbe === true ? { fullModelProbe: true } : {};
+      const result = await probeAccount(accountProbe[1], probeOptions);
       if (!result) return json(res, 404, { error: 'Account not found' });
       return json(res, 200, { success: true, ...result });
     } catch (err) {

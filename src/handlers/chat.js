@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimitedAsync, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary } from '../auth.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
 import { config, log } from '../config.js';
@@ -2084,14 +2084,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
   const requestAttemptStartedAt = Date.now();
   const fastSwitchBudgetMs = Math.max(1000, Number(getAvailabilityConfig().fastSwitchBudgetMs) || 3000);
   const fastSwitchMaxAttempts = Math.max(0, Number(getAvailabilityConfig().fastSwitchMaxAttempts) || 0);
-  // Dynamic: try every active account in the pool (capped at 10) so a
-  // large pool with many rate-limited accounts can still fall through
-  // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
-  // first accounts rate-limited, healthy accounts were never reached
-  // even though they would have worked (issue #5).
+  // Let the configured switch budget decide how deep to search in the pool.
+  // A hard cap of 10 hides healthy accounts behind the first ten cooling ones.
   const activeAccountCount = getAccountList().filter(a => a.status === 'active').length;
   const maxAttempts = Math.min(
-    10,
     Math.max(3, activeAccountCount),
     Math.max(1, fastSwitchMaxAttempts + 1),
   );
@@ -2179,7 +2175,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
           log.warn(`Preflight: ${acct.email} has no capacity (remaining=${rl.messagesRemaining}), skipping`);
           refundReservation(acct.apiKey, acct.reservationTimestamp);
           if (Number.isFinite(rl.retryAfterMs) && rl.retryAfterMs > 0) {
-            markRateLimited(acct.apiKey, rl.retryAfterMs, routingModelKey);
+            await markRateLimitedAsync(acct.apiKey, rl.retryAfterMs, routingModelKey);
           }
           if (!reuseEntryDead && strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
             const availability = getAccountAvailability(acct.apiKey, routingModelKey);
@@ -2827,7 +2823,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           }
           if (isRateLimit) {
             const retryAfterMs = rateLimitCooldownMs(err.message);
-            markRateLimited(apiKey, retryAfterMs, modelKey);
+            await markRateLimitedAsync(apiKey, retryAfterMs, modelKey);
             recordRateLimitEvent({ modelKey, accountId: '', retryAfterMs, reason: err.message }).catch(() => {});
             err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error';
           }
@@ -3012,14 +3008,10 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       let streamInternalCount = 0;
       const fastSwitchBudgetMs = Math.max(1000, Number(getAvailabilityConfig().fastSwitchBudgetMs) || 3000);
       const fastSwitchMaxAttempts = Math.max(0, Number(getAvailabilityConfig().fastSwitchMaxAttempts) || 0);
-      // Dynamic: try every active account in the pool (capped at 10) so a
-      // large pool with many rate-limited accounts can still fall through
-      // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
-      // first accounts rate-limited, healthy accounts were never reached
-      // even though they would have worked (issue #5).
+      // Let the configured switch budget decide how deep to search in the pool.
+      // A hard cap of 10 hides healthy accounts behind the first ten cooling ones.
       const activeAccountCount = getAccountList().filter(a => a.status === 'active').length;
       const maxAttempts = Math.min(
-        10,
         Math.max(3, activeAccountCount),
         Math.max(1, fastSwitchMaxAttempts + 1),
       );
@@ -3299,7 +3291,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 log.warn(`Preflight: ${acct.email} has no capacity (remaining=${rl.messagesRemaining}), skipping`);
                 refundReservation(acct.apiKey, acct.reservationTimestamp);
                 if (Number.isFinite(rl.retryAfterMs) && rl.retryAfterMs > 0) {
-                  markRateLimited(acct.apiKey, rl.retryAfterMs, modelKey);
+                  await markRateLimitedAsync(acct.apiKey, rl.retryAfterMs, modelKey);
                 }
                 if (!reuseEntryDead && strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
                   const availability = getAccountAvailability(acct.apiKey, modelKey);
@@ -3604,7 +3596,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             if (isRateLimit) {
               recordRateLimited();
               const retryAfterMs = rateLimitCooldownMs(err.message);
-              markRateLimited(currentApiKey, retryAfterMs, modelKey);
+              await markRateLimitedAsync(currentApiKey, retryAfterMs, modelKey);
               recordUnhealthyAccount({ modelKey, accountId: acct?.id, email: acct?.email, error: err.message, rateLimited: true, latencyMs: Date.now() - startTime }).catch(() => {});
               recordRateLimitEvent({ modelKey, accountId: acct?.id, email: acct?.email, retryAfterMs, reason: err.message }).catch(() => {});
               err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error';

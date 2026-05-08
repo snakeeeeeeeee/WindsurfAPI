@@ -68,6 +68,37 @@ function positiveIntEnv(name, fallback) {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function envFlag(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw == null || String(raw).trim() === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+}
+
+function rateLimitCooldownMs(message = '') {
+  const reset = String(message || '').match(/resets?\s+in\s*:?\s*((?:(?:\d+)\s*[hms]\s*)+)/i);
+  if (reset) {
+    let total = 0;
+    for (const part of reset[1].matchAll(/(\d+)\s*([hms])/gi)) {
+      const n = Number(part[1]);
+      const unit = part[2].toLowerCase();
+      if (unit === 'h') total += n * 60 * 60 * 1000;
+      else if (unit === 'm') total += n * 60 * 1000;
+      else total += n * 1000;
+    }
+    if (total > 0) return total;
+  }
+  const m = String(message || '').match(/(?:retry (?:after|in)|after)\s+(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)/i);
+  if (m) {
+    const n = Number(m[1]);
+    const unit = m[2].toLowerCase();
+    if (unit.startsWith('h')) return n * 60 * 60 * 1000;
+    if (unit.startsWith('m')) return n * 60 * 1000;
+    return n * 1000;
+  }
+  if (/about an hour|in an hour|try again in.*hour/i.test(message)) return 60 * 60 * 1000;
+  return 60 * 1000;
+}
+
 function rpmLimitFor(account) {
   return TIER_RPM[account.tier || 'unknown'] ?? 20;
 }
@@ -190,6 +221,7 @@ function pruneRpmHistory(account, now) {
 let _saveInFlight = false;
 let _savePending = false;
 function _serializeAccounts() {
+  const now = Date.now();
   return accounts.map(a => ({
     id: a.id, email: a.email, apiKey: a.apiKey,
     apiServerUrl: a.apiServerUrl, method: a.method,
@@ -202,6 +234,10 @@ function _serializeAccounts() {
     // From GetUserStatus — the authoritative tier/entitlement snapshot.
     userStatus: a.userStatus || null,
     userStatusLastFetched: a.userStatusLastFetched || 0,
+    rateLimitedUntil: a.rateLimitedUntil && a.rateLimitedUntil > now ? a.rateLimitedUntil : 0,
+    modelRateLimits: a._modelRateLimits ? Object.fromEntries(
+      Object.entries(a._modelRateLimits).filter(([, until]) => Number(until) > now)
+    ) : {},
   }));
 }
 
@@ -306,6 +342,10 @@ function loadAccounts() {
         tierManual: !!a.tierManual,
         userStatus: a.userStatus || null,
         userStatusLastFetched: a.userStatusLastFetched || 0,
+        rateLimitedUntil: Number(a.rateLimitedUntil || 0) > Date.now() ? Number(a.rateLimitedUntil) : 0,
+        _modelRateLimits: a.modelRateLimits && typeof a.modelRateLimits === 'object'
+          ? Object.fromEntries(Object.entries(a.modelRateLimits).filter(([, until]) => Number(until) > Date.now()))
+          : {},
       });
     }
     if (data.length > 0) log.info(`Loaded ${data.length} account(s) from SQLite`);
@@ -854,33 +894,58 @@ export async function ensureLsForAccount(accountId) {
  * other models remain routable. When omitted, the entire account is blocked
  * (legacy behaviour, used by generic 429 responses).
  */
-export function markRateLimited(apiKey, durationMs = 5 * 60 * 1000, modelKey = null) {
+function applyRateLimitedLocal(apiKey, durationMs = 5 * 60 * 1000, modelKey = null) {
   const account = accounts.find(a => a.apiKey === apiKey);
-  if (!account) return;
+  if (!account) return null;
   const safeMs = Math.max(1000, Number(durationMs) || 0);
   const until = Date.now() + safeMs;
   if (modelKey) {
     if (!account._modelRateLimits) account._modelRateLimits = {};
     account._modelRateLimits[modelKey] = Math.max(account._modelRateLimits[modelKey] || 0, until);
-    markAccountModelCooldown({
-      accountId: account.id,
-      email: account.email,
-      modelKey,
-      durationMs: safeMs,
-      source: 'upstream_rate_limit',
-    }).catch(e => log.debug(`availability: failed to sync cooldown for ${account.id}/${modelKey}: ${e.message}`));
     log.warn(`Account ${account.id} (${account.email}) rate-limited on ${modelKey} for ${Math.round(safeMs / 60000)} min`);
   } else {
     account.rateLimitedUntil = Math.max(account.rateLimitedUntil || 0, until);
-    markAccountModelCooldown({
-      accountId: account.id,
-      email: account.email,
-      modelKey: '*',
-      durationMs: safeMs,
-      source: 'upstream_rate_limit_global',
-    }).catch(e => log.debug(`availability: failed to sync global cooldown for ${account.id}: ${e.message}`));
     log.warn(`Account ${account.id} (${account.email}) rate-limited (all models) for ${Math.round(safeMs / 60000)} min`);
   }
+  saveAccounts();
+  return { account, safeMs };
+}
+
+/**
+ * Mark an account as rate-limited and synchronously update the in-process
+ * selector state. Shared-state persistence is fired in the background; use
+ * markRateLimitedAsync from request retry paths that must wait for it.
+ */
+export function markRateLimited(apiKey, durationMs = 5 * 60 * 1000, modelKey = null) {
+  const applied = applyRateLimitedLocal(apiKey, durationMs, modelKey);
+  if (!applied) return null;
+  const { account, safeMs } = applied;
+  markAccountModelCooldown({
+    accountId: account.id,
+    email: account.email,
+    modelKey: modelKey || '*',
+    durationMs: safeMs,
+    source: modelKey ? 'upstream_rate_limit' : 'upstream_rate_limit_global',
+  }).catch(e => log.warn(`availability: failed to persist cooldown for ${account.id}/${modelKey || '*'}: ${e.message}`));
+  return applied;
+}
+
+export async function markRateLimitedAsync(apiKey, durationMs = 5 * 60 * 1000, modelKey = null) {
+  const applied = applyRateLimitedLocal(apiKey, durationMs, modelKey);
+  if (!applied) return null;
+  const { account, safeMs } = applied;
+  try {
+    await markAccountModelCooldown({
+      accountId: account.id,
+      email: account.email,
+      modelKey: modelKey || '*',
+      durationMs: safeMs,
+      source: modelKey ? 'upstream_rate_limit' : 'upstream_rate_limit_global',
+    });
+  } catch (e) {
+    log.warn(`availability: failed to persist cooldown for ${account.id}/${modelKey || '*'}: ${e.message}`);
+  }
+  return applied;
 }
 
 export function clearAccountRateLimit(id, modelKey = '*') {
@@ -1393,36 +1458,54 @@ const PROBE_CANARIES = [
 // so the caller awaits the same result without firing a second probe.
 const _probeInFlight = new Map();
 
-export async function probeAccount(id) {
-  const existing = _probeInFlight.get(id);
+export async function probeAccount(id, options = {}) {
+  const probeKey = options?.fullModelProbe ? `${id}:full` : id;
+  const existing = _probeInFlight.get(probeKey);
   if (existing) return existing;
 
   const account = accounts.find(a => a.id === id);
   if (!account) return null;
 
-  const promise = _probeAccountImpl(account).finally(() => {
-    _probeInFlight.delete(id);
+  const promise = _probeAccountImpl(account, options).finally(() => {
+    _probeInFlight.delete(probeKey);
   });
-  _probeInFlight.set(id, promise);
+  _probeInFlight.set(probeKey, promise);
   return promise;
 }
 
-async function _probeAccountImpl(account) {
-  try {
-
-  // ── Step 1: authoritative tier via GetUserStatus ──
+export async function refreshAccountStatusOnly(id) {
+  const account = accounts.find(a => a.id === id);
+  if (!account) return null;
   const status = await fetchUserStatus(account.id);
+  account.lastProbed = Date.now();
+  saveAccounts();
+  return { tier: account.tier || 'unknown', capabilities: account.capabilities || {}, statusOnly: true, userStatus: status };
+}
 
-  const { WindsurfClient } = await import('./client.js');
-  const { getModelInfo } = await import('./models.js');
-  const { ensureLs, getLsFor } = await import('./langserver.js');
+async function _probeAccountImpl(account, options = {}) {
+  try {
+    const fullModelProbe = options.fullModelProbe ?? envFlag('WINDSURFAPI_FULL_MODEL_PROBE', false);
 
-  const proxy = getEffectiveProxy(account.id) || null;
-  await ensureLs(proxy);
-  const ls = getLsFor(proxy);
-  if (!ls) { log.error(`No LS available for account ${account.id}`); return null; }
-  const port = ls.port;
-  const csrf = ls.csrfToken;
+    // ── Step 1: authoritative tier via GetUserStatus ──
+    const status = await fetchUserStatus(account.id);
+
+    if (!fullModelProbe) {
+      account.lastProbed = Date.now();
+      saveAccounts();
+      log.info(`Probe status-only for ${account.id}: tier=${account.tier}${status ? ` plan="${status.planName}"` : ''}`);
+      return { tier: account.tier, capabilities: account.capabilities || {}, statusOnly: true };
+    }
+
+    const { WindsurfClient } = await import('./client.js');
+    const { getModelInfo } = await import('./models.js');
+    const { ensureLs, getLsFor } = await import('./langserver.js');
+
+    const proxy = getEffectiveProxy(account.id) || null;
+    await ensureLs(proxy);
+    const ls = getLsFor(proxy);
+    if (!ls) { log.error(`No LS available for account ${account.id}`); return null; }
+    const port = ls.port;
+    const csrf = ls.csrfToken;
 
   // ── Step 2: canary probe, skipping models already classified by GetUserStatus ──
   // When allowlist is available we only need to probe UID-only models (no enum,
@@ -1458,6 +1541,7 @@ async function _probeAccountImpl(account) {
       } catch (err) {
         const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
         if (isRateLimit) {
+          markRateLimited(account.apiKey, rateLimitCooldownMs(err.message), modelKey);
           log.info(`  ${modelKey}: RATE_LIMITED (skipped)`);
         } else {
           updateCapability(account.apiKey, modelKey, false, 'model_error');
@@ -1501,6 +1585,7 @@ async function _probeAccountImpl(account) {
           log.info(`  cloud ${modelKey}: OK`);
         } catch (err) {
           if (/rate limit|rate_limit|too many requests|quota/i.test(err.message)) {
+            markRateLimited(account.apiKey, rateLimitCooldownMs(err.message), modelKey);
             log.info(`  cloud ${modelKey}: RATE_LIMITED — stopping probe`);
             rateLimited = true;
           } else {

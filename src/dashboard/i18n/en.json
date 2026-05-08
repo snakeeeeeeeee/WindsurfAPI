@@ -76,6 +76,7 @@
     "confirm": "Confirm",
     "delete": "Delete",
     "refresh": "Refresh",
+    "refreshStatus": "Refresh status",
     "runNow": "Run now",
     "probe": "Probe",
     "probeTitle": "Probe capabilities",
@@ -857,9 +858,9 @@
     "probe": {
       "doing": "Probing, takes about 10-30 seconds...",
       "complete": "Probe complete: {{result}}",
-      "allDoing": "Probing all accounts, takes 1-3 minutes depending on count...",
-      "allComplete": "Probe complete: {{summary}}",
-      "probeAllComplete": "Probe complete: {{summary}}",
+      "allDoing": "Refreshing account status, takes 1-3 minutes depending on count...",
+      "allComplete": "Status refresh complete: {{summary}}",
+      "probeAllComplete": "Status refresh complete: {{summary}}",
       "probeComplete": "Probe complete: {{tier}}"
     },
     "credits": {

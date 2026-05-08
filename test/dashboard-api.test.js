@@ -54,6 +54,13 @@ describe('dashboard batch import proxy binding', () => {
     assert.match(api, /process\.exit\(0\)/, 'service restart should let Docker or the supervisor restart the API process');
   });
 
+  it('keeps bulk account probing status-only to avoid burning model quota', () => {
+    const api = readFileSync(new URL('../src/dashboard/api.js', import.meta.url), 'utf8');
+    const route = api.match(/subpath === '\/accounts\/probe-all' && method === 'POST'[\s\S]+?return json\(res, 200, \{ success: true, results \}\);/)?.[0] || '';
+    assert.match(route, /refreshAccountStatusOnly\(a\.id\)/, 'bulk probe must only refresh GetUserStatus snapshots');
+    assert.doesNotMatch(route, /probeAccount\(a\.id/, 'bulk probe must not run full model probes for every account');
+  });
+
   it('uses nested result.account.id from processWindsurfLogin output', () => {
     const binding = buildBatchProxyBinding(
       { success: true, account: { id: 'acct_123' } },

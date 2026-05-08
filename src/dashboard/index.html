@@ -1989,7 +1989,7 @@ window._firebaseOAuth = async function(provider) {
         </button>
         <button class="btn btn-outline" onclick="App.probeAll()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <span data-i18n="action.probe">全部探测</span>
+          <span data-i18n="action.refreshStatus">刷新状态</span>
         </button>
       </div>
     </div>
@@ -2201,7 +2201,7 @@ window._firebaseOAuth = async function(provider) {
         <div class="field-row">
           <div class="field"><label class="field-label">调度模式</label><select id="av-mode" class="select"><option value="passive_strong">被动强可用</option><option value="conservative">保守</option><option value="off">关闭</option></select></div>
           <div class="field"><label class="field-label">同系列降级</label><select id="av-auto-fallback" class="select"><option value="same_family">开启</option><option value="off">关闭</option></select></div>
-          <div class="field"><label class="field-label">最多换号次数</label><input id="av-fast-switch-attempts" class="input" type="number" min="0" max="20"></div>
+          <div class="field"><label class="field-label">最多换号次数</label><input id="av-fast-switch-attempts" class="input" type="number" min="0" max="100"></div>
           <div class="field"><label class="field-label">换号总预算 ms</label><input id="av-fast-switch-budget-ms" class="input" type="number" min="500" step="100"></div>
         </div>
         <input id="av-probe-concurrency" type="hidden">

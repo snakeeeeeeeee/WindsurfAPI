@@ -6,6 +6,7 @@ import {
   getApiKey,
   getRpmStats,
   markRateLimited,
+  markRateLimitedAsync,
   releaseAccount,
   removeAccount,
   setAccountTier,
@@ -97,6 +98,15 @@ describe('rate-limit handling', () => {
 
     assert.ok(until >= now + 1000, `expected near-real expiry, got ${until - now}ms`);
     assert.ok(until <= now + 2500, `expected short cooldown, got ${until - now}ms`);
+  });
+
+  it('async rate-limit marking updates selector state before returning', async () => {
+    const account = addTestAccount('async-cd');
+    const modelKey = 'gemini-2.5-flash';
+
+    await markRateLimitedAsync(account.apiKey, 2000, modelKey);
+
+    assert.equal(getApiKey([], modelKey), null);
   });
 
   it('returns 429 when every eligible account is locally RPM-exhausted', async () => {
