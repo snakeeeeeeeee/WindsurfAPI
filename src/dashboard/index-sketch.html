@@ -1993,6 +1993,12 @@ window._firebaseOAuth = async function(provider) {
           <div class="field"><label class="field-label">Cache hit rate</label><input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE" placeholder="留空 = 不覆盖"></div>
           <div class="field"><label class="field-label">Cache creation rate</label><input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE" placeholder="留空 = 1"></div>
           <div class="field"><label class="field-label">Creation tail ratio</label><input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO" placeholder="0.15"></div>
+          <div class="field"><label class="field-label" data-zh="报告计入真实上游前缀" data-en="Include real upstream prefix">报告计入真实上游前缀</label><select class="select" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX">
+            <option value="" data-zh="默认关闭" data-en="Default off">默认关闭</option>
+            <option value="1" data-zh="1 - 开启" data-en="1 - On">1 - 开启</option>
+            <option value="0" data-zh="关闭" data-en="Off">关闭</option>
+          </select></div>
+          <div class="field"><label class="field-label" data-zh="报告额外前缀 tokens" data-en="Reported extra prefix tokens">报告额外前缀 tokens</label><input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS" placeholder="留空 = 0"></div>
           <div class="field"><label class="field-label">CASCADE_REUSE_HASH_SYSTEM</label><select class="select" data-env-key="CASCADE_REUSE_HASH_SYSTEM">
             <option value="" data-zh="默认严格" data-en="Default strict">默认严格</option>
             <option value="0" data-zh="0 - 忽略 system 漂移" data-en="0 - Ignore system drift">0 - 忽略 system 漂移</option>

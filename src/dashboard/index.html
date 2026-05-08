@@ -2589,6 +2589,18 @@ window._firebaseOAuth = async function(provider) {
             <input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_TAIL_RATIO" placeholder="0.15">
           </label>
           <label class="form-field">
+            <span data-i18n="runtimeEnv.includeUpstreamPrefix">报告计入真实上游前缀</span>
+            <select class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX">
+              <option value="" data-i18n="runtimeEnv.defaultOff">默认关闭</option>
+              <option value="1" data-i18n="runtimeEnv.on">1 - 开启</option>
+              <option value="0" data-i18n="runtimeEnv.off">关闭</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.extraPrefixTokens">报告额外前缀 tokens</span>
+            <input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS" data-i18n-placeholder="runtimeEnv.extraPrefixTokensPlaceholder" placeholder="留空 = 0">
+          </label>
+          <label class="form-field">
             <span data-i18n="runtimeEnv.reuseHashSystem">复用 hash system</span>
             <select class="input" data-env-key="CASCADE_REUSE_HASH_SYSTEM">
               <option value="" data-i18n="runtimeEnv.defaultStrict">默认严格</option>

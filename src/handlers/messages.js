@@ -110,6 +110,18 @@ function reportedAnthropicCacheCreationRate() {
   return Math.min(1, n);
 }
 
+function reportedAnthropicIncludeUpstreamPrefix() {
+  return process.env.WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX === '1';
+}
+
+function reportedAnthropicExtraPrefixTokens() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS || '').trim();
+  if (!raw) return 0;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
 function scaleAnthropicCacheCreationSplit(split, reportedTotal) {
   if (!split || typeof split !== 'object') return split;
 
@@ -518,7 +530,10 @@ function buildOfficialReportedUsageCandidate(body, context = {}) {
   }
   pruneReportedAnthropicCache(now);
 
-  const freshInput = Math.max(1, totalPromptTokens - cacheRead - cacheCreation);
+  const freshOverride = reportedAnthropicFreshInputTokens();
+  const freshInput = freshOverride === null
+    ? Math.max(1, totalPromptTokens - cacheRead - cacheCreation)
+    : freshOverride;
   return {
     promptTotal: totalPromptTokens,
     input_tokens: freshInput,
@@ -592,6 +607,47 @@ function buildHybridReportedUsageBasis(body, context = {}, upstreamUsage = {}) {
       conservativeCreation,
     ),
     skipConfiguredCacheRewrite: true,
+  };
+}
+
+function upstreamReportedPrefixTokens(usage = {}) {
+  const cacheRead = nonNegativeInteger(
+    usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens,
+  );
+  const cacheCreation = nonNegativeInteger(usage.cache_creation_input_tokens);
+  return Math.max(cacheRead, cacheCreation);
+}
+
+function applyReportedSystemPrefixFloor(anthropicUsage, usage = {}) {
+  if (!anthropicReportedCacheBucketsEnabled()) return anthropicUsage;
+
+  const upstreamPrefix = reportedAnthropicIncludeUpstreamPrefix()
+    ? upstreamReportedPrefixTokens(usage)
+    : 0;
+  const extraPrefix = reportedAnthropicExtraPrefixTokens();
+  const prefixFloor = upstreamPrefix + extraPrefix;
+  if (prefixFloor <= 0) return anthropicUsage;
+
+  const currentRead = Number(anthropicUsage.cache_read_input_tokens) || 0;
+  const currentCreation = Number(anthropicUsage.cache_creation_input_tokens) || 0;
+  if (currentRead > 0) {
+    return {
+      ...anthropicUsage,
+      cache_read_input_tokens: Math.max(currentRead, prefixFloor),
+    };
+  }
+  if (currentCreation > 0) {
+    const cacheCreation = Math.max(currentCreation, prefixFloor);
+    return {
+      ...anthropicUsage,
+      cache_creation_input_tokens: cacheCreation,
+      cache_creation: scaleAnthropicCacheCreationSplit(anthropicUsage.cache_creation, cacheCreation),
+    };
+  }
+  return {
+    ...anthropicUsage,
+    cache_creation_input_tokens: prefixFloor,
+    cache_creation: { ephemeral_5m_input_tokens: prefixFloor, ephemeral_1h_input_tokens: 0 },
   };
 }
 
@@ -897,10 +953,10 @@ function buildAnthropicUsage(usage, opts = {}) {
       ? opts.reportedUsageBasis.resolve(usage)
       : opts.reportedUsageBasis;
     if (!basis || typeof basis !== 'object') {
-      return applyAnthropicReportedCacheBuckets(anthropicUsage, {
+      return applyReportedSystemPrefixFloor(applyAnthropicReportedCacheBuckets(anthropicUsage, {
         promptTotal,
         cacheRead,
-      });
+      }), usage);
     }
     const basisUsage = {
       ...anthropicUsage,
@@ -912,17 +968,17 @@ function buildAnthropicUsage(usage, opts = {}) {
         ephemeral_1h_input_tokens: 0,
       },
     };
-    if (basis.skipConfiguredCacheRewrite) return basisUsage;
-    return applyAnthropicReportedCacheBuckets(basisUsage, {
+    if (basis.skipConfiguredCacheRewrite) return applyReportedSystemPrefixFloor(basisUsage, usage);
+    return applyReportedSystemPrefixFloor(applyAnthropicReportedCacheBuckets(basisUsage, {
       promptTotal: Number(basis.promptTotal) || Number(basis.input_tokens) || 0,
       cacheRead: Number(basis.cache_read_input_tokens) || 0,
       useBaseRateFloor: false,
-    });
+    }), usage);
   }
-  return applyAnthropicReportedCacheBuckets(anthropicUsage, {
+  return applyReportedSystemPrefixFloor(applyAnthropicReportedCacheBuckets(anthropicUsage, {
     promptTotal,
     cacheRead,
-  });
+  }), usage);
 }
 
 function applyAnthropicReportedCacheBuckets(anthropicUsage, { promptTotal = 0, cacheRead = 0, useBaseRateFloor = true } = {}) {
