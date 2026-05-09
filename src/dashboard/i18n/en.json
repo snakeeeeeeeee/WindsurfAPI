@@ -701,6 +701,7 @@
     "cacheTargetHitRate": "Target cache hit-rate write floor",
     "cacheTargetHitRatePlaceholder": "Empty = no write floor; suggested 0.90",
     "cacheTargetWriteFloor": "Enable target hit-rate write floor",
+    "cacheTargetInputFloor": "Enable displayed hit-rate input floor",
     "cacheCreationRate": "Reported cache creation multiplier",
     "cacheCreationRatePlaceholder": "Empty = 1; accepts 0.5 or 50%",
     "cacheCreationTailRatio": "official tail creation ratio",

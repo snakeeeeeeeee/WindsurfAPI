@@ -107,6 +107,11 @@ function reportedAnthropicCacheTargetWriteFloorEnabled() {
   return raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes';
 }
 
+function reportedAnthropicCacheTargetInputFloorEnabled() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_INPUT_FLOOR || '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes';
+}
+
 function cacheReadForVisibleHitRate(freshInput, cacheCreation, rate) {
   if (!rate || rate <= 0 || rate >= 1) return 0;
   const numerator = rate * (freshInput + cacheCreation);
@@ -120,6 +125,28 @@ function cacheCreationForVisibleHitRate(freshInput, cacheRead, rate) {
   const n = (cacheRead / rate) - cacheRead - freshInput;
   if (!Number.isFinite(n) || n <= 0) return 0;
   return Math.ceil(n - 1e-9);
+}
+
+function freshInputForReadOnlyHitRate(cacheRead, rate) {
+  if (!rate || rate <= 0 || rate >= 1) return 0;
+  const n = (cacheRead * (1 - rate)) / rate;
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.ceil(n - 1e-9);
+}
+
+function applyAnthropicTargetInputFloor(anthropicUsage) {
+  if (!reportedAnthropicCacheTargetInputFloorEnabled()) return anthropicUsage;
+  const targetRate = reportedAnthropicCacheTargetHitRate();
+  const inputFloor = freshInputForReadOnlyHitRate(
+    Number(anthropicUsage.cache_read_input_tokens) || 0,
+    targetRate,
+  );
+  const currentInput = Number(anthropicUsage.input_tokens) || 0;
+  if (inputFloor <= currentInput) return anthropicUsage;
+  return {
+    ...anthropicUsage,
+    input_tokens: inputFloor,
+  };
 }
 
 function reportedAnthropicCacheCreationRate() {
@@ -720,61 +747,70 @@ function applyReportedSystemPrefixFloor(anthropicUsage, usage = {}, opts = {}) {
     ? readSyntheticTailTokens(opts.reportedCacheScope)
     : 0;
   const prefixFloor = upstreamPrefix + extraPrefix + syntheticRead;
-  if (prefixFloor <= 0) return anthropicUsage;
+  if (prefixFloor <= 0) return applyAnthropicTargetInputFloor(anthropicUsage);
 
   const currentRead = Number(anthropicUsage.cache_read_input_tokens) || 0;
   const currentCreation = Number(anthropicUsage.cache_creation_input_tokens) || 0;
+  const currentInput = Number(anthropicUsage.input_tokens) || 0;
   const bucket = reportedAnthropicPrefixBucket();
   if (bucket === 'cache_read') {
     const cacheRead = Math.max(currentRead, prefixFloor);
+    const targetRate = reportedAnthropicCacheTargetHitRate();
+    const inputTokens = reportedAnthropicCacheTargetInputFloorEnabled()
+      ? Math.max(
+          currentInput,
+          freshInputForReadOnlyHitRate(cacheRead, targetRate),
+        )
+      : currentInput;
     const reportedTailTokens = nonNegativeInteger(opts.reportedTailTokens);
     const tailCreation = reportedTailTokens > 0
       ? reportedTailTokens
-      : Math.max(0, (Number(anthropicUsage.input_tokens) || 0) + currentCreation);
-    const targetRate = reportedAnthropicCacheTargetWriteFloorEnabled()
+      : Math.max(0, currentInput + currentCreation);
+    const writeTargetRate = reportedAnthropicCacheTargetWriteFloorEnabled()
       ? reportedAnthropicCacheTargetHitRate()
       : 0;
     const targetCreation = cacheCreationForVisibleHitRate(
-      Number(anthropicUsage.input_tokens) || 0,
+      inputTokens,
       cacheRead,
-      targetRate,
+      writeTargetRate,
     );
     const cacheCreation = Math.max(tailCreation, targetCreation);
     if (opts.reportedCacheScope) recordSyntheticTailTokens(opts.reportedCacheScope, cacheCreation);
-    return {
+    return applyAnthropicTargetInputFloor({
       ...anthropicUsage,
+      input_tokens: inputTokens,
       cache_read_input_tokens: cacheRead,
       cache_creation_input_tokens: cacheCreation,
       cache_creation: normalizeAnthropicCacheCreationSplit(anthropicUsage.cache_creation, cacheCreation),
-    };
+    });
   }
   if (bucket === 'cache_creation') {
     const cacheCreation = Math.max(currentCreation, prefixFloor);
-    return {
+    return applyAnthropicTargetInputFloor({
       ...anthropicUsage,
       cache_creation_input_tokens: cacheCreation,
       cache_creation: scaleAnthropicCacheCreationSplit(anthropicUsage.cache_creation, cacheCreation),
-    };
+    });
   }
   if (currentRead > 0) {
-    return {
+    return applyAnthropicTargetInputFloor({
       ...anthropicUsage,
       cache_read_input_tokens: Math.max(currentRead, prefixFloor),
-    };
+    });
   }
   if (currentCreation > 0) {
     const cacheCreation = Math.max(currentCreation, prefixFloor);
-    return {
+    return applyAnthropicTargetInputFloor({
       ...anthropicUsage,
       cache_creation_input_tokens: cacheCreation,
       cache_creation: scaleAnthropicCacheCreationSplit(anthropicUsage.cache_creation, cacheCreation),
-    };
+    });
   }
-  return {
+  return applyAnthropicTargetInputFloor({
     ...anthropicUsage,
     cache_creation_input_tokens: prefixFloor,
     cache_creation: { ephemeral_5m_input_tokens: prefixFloor, ephemeral_1h_input_tokens: 0 },
-  };
+  });
 }
 
 function buildClientReportedUsageBasis(body) {

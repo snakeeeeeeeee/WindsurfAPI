@@ -2688,6 +2688,14 @@ window._firebaseOAuth = async function(provider) {
             </select>
           </label>
           <label class="form-field">
+            <span data-i18n="runtimeEnv.cacheTargetInputFloor">启用展示命中率补 input</span>
+            <select class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_INPUT_FLOOR">
+              <option value="" data-i18n="runtimeEnv.defaultOff">默认关闭</option>
+              <option value="1" data-i18n="runtimeEnv.on">1 - 开启</option>
+              <option value="0" data-i18n="runtimeEnv.off">关闭</option>
+            </select>
+          </label>
+          <label class="form-field">
             <span data-i18n="runtimeEnv.cacheCreationRate">报告 cache creation 倍率</span>
             <input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE" data-i18n-placeholder="runtimeEnv.cacheCreationRatePlaceholder" placeholder="留空 = 1">
           </label>

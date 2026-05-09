@@ -701,6 +701,7 @@
     "cacheTargetHitRate": "目标缓存命中率补写",
     "cacheTargetHitRatePlaceholder": "留空 = 不补写；建议 0.90",
     "cacheTargetWriteFloor": "启用目标命中率补写",
+    "cacheTargetInputFloor": "启用展示命中率补 input",
     "cacheCreationRate": "报告 cache creation 倍率",
     "cacheCreationRatePlaceholder": "留空 = 1；支持 0.5 或 50%",
     "cacheCreationTailRatio": "official 尾部创建比例",

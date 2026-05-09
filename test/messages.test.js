@@ -13,6 +13,7 @@ process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'upstream';
 process.env.WINDSURFAPI_ANTHROPIC_REPORTED_OUTPUT_BASIS = 'upstream';
 process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '__test_unset__';
 process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE = '0';
+process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_INPUT_FLOOR = '0';
 process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE = '1';
 
 const {
@@ -856,6 +857,80 @@ describe('Anthropic messages request translation', () => {
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_HIT_RATE = prevTargetRate;
       if (prevTargetFloor === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_WRITE_FLOOR;
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_WRITE_FLOOR = prevTargetFloor;
+    }
+  });
+
+  it('can pad fresh input for CCTest-style read-only hit-rate displays', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+    const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+    const prevInclude = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX;
+    const prevExtra = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS;
+    const prevBucket = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_PREFIX_BUCKET;
+    const prevTargetRate = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_HIT_RATE;
+    const prevTargetWriteFloor = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_WRITE_FLOOR;
+    const prevTargetInputFloor = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_INPUT_FLOOR;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'official';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS = '20000';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_PREFIX_BUCKET = 'cache_read';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_HIT_RATE = '0.90';
+    delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_WRITE_FLOOR;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_INPUT_FLOOR = '1';
+    try {
+      const requestBody = {
+        model: 'claude-sonnet-4.6',
+        messages: [{ role: 'user', content: 'short question' }],
+      };
+      const context = {
+        callerKey: 'api:target-input-floor-key',
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: {
+                prompt_tokens: 50000,
+                completion_tokens: 5,
+                total_tokens: 50005,
+                prompt_tokens_details: { cached_tokens: 0 },
+                cache_creation_input_tokens: 40000,
+              },
+            },
+          };
+        },
+      };
+      const result = await handleMessages(requestBody, context);
+      const { usage } = result.body;
+      const expectedInput = Math.ceil((60000 * 0.1 / 0.9) - 1e-9);
+      const displayedRate = usage.cache_read_input_tokens
+        / (usage.input_tokens + usage.cache_read_input_tokens);
+
+      assert.equal(usage.input_tokens, expectedInput);
+      assert.equal(usage.cache_read_input_tokens, 60000);
+      assert.equal(usage.cache_creation_input_tokens, estimateAnthropicClientTailTokens(requestBody));
+      assert.ok(displayedRate > 0.899 && displayedRate <= 0.9);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
+      if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
+      if (prevInclude === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX = prevInclude;
+      if (prevExtra === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS = prevExtra;
+      if (prevBucket === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_PREFIX_BUCKET;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_PREFIX_BUCKET = prevBucket;
+      if (prevTargetRate === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_HIT_RATE;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_HIT_RATE = prevTargetRate;
+      if (prevTargetWriteFloor === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_WRITE_FLOOR;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_WRITE_FLOOR = prevTargetWriteFloor;
+      if (prevTargetInputFloor === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_INPUT_FLOOR;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_INPUT_FLOOR = prevTargetInputFloor;
     }
   });
 

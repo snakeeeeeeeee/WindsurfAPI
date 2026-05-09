@@ -65,3 +65,19 @@
 - [complete] Phase 3: Dashboard/runtime-config/i18n 增加配置项。
 - [complete] Phase 4: 补回归测试并本地验证。
 - [complete] Phase 5: 热更新 Docker 并做实际调用验证。
+
+## 2026-05-10 CCTest 展示命中率 input floor
+
+## Goal
+
+- 处理 CCTest 顶部缓存命中率仍显示 99% 的展示口径。
+- 保留现有 write floor，同时新增按 `cache_read / (input + cache_read)` 口径补 fresh input 的开关。
+- 通过 Dashboard 可配置，默认关闭。
+
+## Phases
+
+- [complete] Phase 1: 确认 CCTest 顶部命中率疑似忽略 cache_creation。
+- [complete] Phase 2: 新增 `WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_INPUT_FLOOR`。
+- [complete] Phase 3: Dashboard/runtime-config/i18n 增加配置项。
+- [complete] Phase 4: 增加 read-only hit-rate 回归测试并验证。
+- [complete] Phase 5: 热更新 Docker，清理旧命中率覆盖并启用新配置。
