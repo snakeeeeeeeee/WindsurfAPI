@@ -2676,6 +2676,18 @@ window._firebaseOAuth = async function(provider) {
             <input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_HIT_RATE" data-i18n-placeholder="runtimeEnv.cacheHitRatePlaceholder" placeholder="留空 = 不覆盖">
           </label>
           <label class="form-field">
+            <span data-i18n="runtimeEnv.cacheTargetHitRate">目标缓存命中率补写</span>
+            <input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_HIT_RATE" data-i18n-placeholder="runtimeEnv.cacheTargetHitRatePlaceholder" placeholder="0.90">
+          </label>
+          <label class="form-field">
+            <span data-i18n="runtimeEnv.cacheTargetWriteFloor">启用目标命中率补写</span>
+            <select class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_WRITE_FLOOR">
+              <option value="" data-i18n="runtimeEnv.defaultOff">默认关闭</option>
+              <option value="1" data-i18n="runtimeEnv.on">1 - 开启</option>
+              <option value="0" data-i18n="runtimeEnv.off">关闭</option>
+            </select>
+          </label>
+          <label class="form-field">
             <span data-i18n="runtimeEnv.cacheCreationRate">报告 cache creation 倍率</span>
             <input class="input" data-env-key="WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE" data-i18n-placeholder="runtimeEnv.cacheCreationRatePlaceholder" placeholder="留空 = 1">
           </label>

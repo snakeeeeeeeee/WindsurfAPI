@@ -92,12 +92,34 @@ function reportedAnthropicCacheHitRate() {
   return Math.min(1, n);
 }
 
+function reportedAnthropicCacheTargetHitRate() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_HIT_RATE || '').trim();
+  if (!raw) return 0;
+  let n = Number(raw.replace(/%$/, ''));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n > 1) n = n / 100;
+  if (n <= 0 || n >= 1) return 0;
+  return n;
+}
+
+function reportedAnthropicCacheTargetWriteFloorEnabled() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_WRITE_FLOOR || '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes';
+}
+
 function cacheReadForVisibleHitRate(freshInput, cacheCreation, rate) {
   if (!rate || rate <= 0 || rate >= 1) return 0;
   const numerator = rate * (freshInput + cacheCreation);
   const denominator = 1 - rate;
   if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return 0;
   return Math.ceil((numerator / denominator) - 1e-9);
+}
+
+function cacheCreationForVisibleHitRate(freshInput, cacheRead, rate) {
+  if (!rate || rate <= 0 || rate >= 1) return 0;
+  const n = (cacheRead / rate) - cacheRead - freshInput;
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.ceil(n - 1e-9);
 }
 
 function reportedAnthropicCacheCreationRate() {
@@ -709,7 +731,15 @@ function applyReportedSystemPrefixFloor(anthropicUsage, usage = {}, opts = {}) {
     const tailCreation = reportedTailTokens > 0
       ? reportedTailTokens
       : Math.max(0, (Number(anthropicUsage.input_tokens) || 0) + currentCreation);
-    const cacheCreation = tailCreation;
+    const targetRate = reportedAnthropicCacheTargetWriteFloorEnabled()
+      ? reportedAnthropicCacheTargetHitRate()
+      : 0;
+    const targetCreation = cacheCreationForVisibleHitRate(
+      Number(anthropicUsage.input_tokens) || 0,
+      cacheRead,
+      targetRate,
+    );
+    const cacheCreation = Math.max(tailCreation, targetCreation);
     if (opts.reportedCacheScope) recordSyntheticTailTokens(opts.reportedCacheScope, cacheCreation);
     return {
       ...anthropicUsage,

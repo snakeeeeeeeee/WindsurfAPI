@@ -49,3 +49,19 @@
 - [complete] Phase 7: 增加 Dashboard 服务重启按钮，保存运行时配置后可由 Docker/进程守护重新拉起并读取 SQLite 覆盖配置。
 - [complete] Phase 8: 修复工具调用轮 assistant 文本回放差异导致的复用 MISS，并补充 hash-only projectedTail 诊断。
 - [complete] Phase 9: 修复 stream 冷无输出 transient stall 被 fast-switch 预算挡住、无法换账号重试的问题。
+
+## 2026-05-10 CCTest 目标命中率补写配置
+
+## Goal
+
+- 在 Dashboard 增加目标缓存命中率补写配置。
+- 默认关闭，不影响当前 tail-only cache write 行为。
+- 开启后基于最终 cache_read 反推最低 cache_creation，使 CCTest 命中率可稳定靠近 90% 等目标。
+
+## Phases
+
+- [complete] Phase 1: 梳理现有 usage runtime env、面板字段和测试位置。
+- [complete] Phase 2: 后端增加目标命中率补写逻辑。
+- [complete] Phase 3: Dashboard/runtime-config/i18n 增加配置项。
+- [complete] Phase 4: 补回归测试并本地验证。
+- [complete] Phase 5: 热更新 Docker 并做实际调用验证。

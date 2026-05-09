@@ -42,3 +42,10 @@
 - Added `CASCADE_REUSE_HASH_TOOL_ARGS` to optionally ignore tool-call argument values in reuse fingerprints for single-user/CCTest hit-rate tuning, and `CASCADE_REUSE_SINGLE_TOOL_ALIAS` to write additional pool aliases for clients that replay only one tool call from a multi-call assistant turn.
 - Exposed both new reuse knobs in runtime config and the Dashboard; added targeted tests for argument-drift reuse and single-tool alias fingerprints.
 - Verification passed: `node --check src/conversation-pool.js`, `node --check src/handlers/chat.js`, `node --check src/runtime-config.js`, `node --test test/conversation-pool.test.js test/chat-reuse.test.js`, `node --test test/dashboard-api.test.js test/runtime-config-sqlite.test.js test/dashboard-syntax.test.js`, `node --test test/stream-cache-policy.test.js test/stream-error.test.js test/stream-stall.test.js test/stream-pool-exhausted-error.test.js`, and `git diff --check`.
+
+## 2026-05-10
+
+- Started CCTest target hit-rate write-floor work: add Dashboard/runtime env knobs so `cache_read` mode can keep large read while automatically padding `cache_creation` toward a configured visible hit rate.
+- Implemented `WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_HIT_RATE` and `WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_TARGET_WRITE_FLOOR`, exposed both in Dashboard runtime env, and added regression tests.
+- Verification passed: `node --check src/handlers/messages.js`, `node --check src/runtime-config.js`, `node --test test/messages.test.js`, `node --test test/runtime-config-sqlite.test.js`, `node --test test/dashboard-syntax.test.js`, and `git diff --check`. `test/check-i18n.test.js` still fails only on pre-existing hardcoded Chinese in Dashboard.
+- Hot-copied changes into local Docker and verified new-api logs: first request reported `prompt_tokens=1`, `cache_tokens=20000`, `cache_write_tokens=2222`; second request reported `cache_tokens=22222`, `cache_write_tokens=2469`, matching ~90% target hit-rate math.
