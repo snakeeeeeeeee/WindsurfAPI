@@ -18,6 +18,7 @@ process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_CREATION_RATE = '1';
 const {
   annotateRiskyReadToolResult,
   estimateAnthropicClientPromptTokens,
+  estimateAnthropicClientTailTokens,
   extractCallerSubKey,
   handleMessages,
   resetReportedAnthropicCacheForTests,
@@ -704,6 +705,78 @@ describe('Anthropic messages request translation', () => {
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX = prevInclude;
       if (prevExtra === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS;
       else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS = prevExtra;
+    }
+  });
+
+  it('can force reported prefix floor into cache read for CCTest-style billing displays', async () => {
+    const prevEnabled = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+    const prevBasis = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+    const prevFresh = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+    const prevInclude = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX;
+    const prevExtra = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS;
+    const prevBucket = process.env.WINDSURFAPI_ANTHROPIC_REPORTED_PREFIX_BUCKET;
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = 'official';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX = '1';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS = '20000';
+    process.env.WINDSURFAPI_ANTHROPIC_REPORTED_PREFIX_BUCKET = 'cache_read';
+    try {
+      const requestBody = {
+        model: 'claude-sonnet-4.6',
+        system: [{ type: 'text', text: 'Stable system prefix.', cache_control: { type: 'ephemeral' } }],
+        tools: [{
+          name: 'read_file',
+          description: 'Stable tool schema that should not count as the fresh tail write.',
+          input_schema: { type: 'object', properties: { path: { type: 'string' } } },
+        }],
+        messages: [{ role: 'user', content: 'short question' }],
+      };
+      const expectedPromptTokens = estimateAnthropicClientPromptTokens(requestBody);
+      const expectedTailTokens = estimateAnthropicClientTailTokens(requestBody);
+      const context = {
+        callerKey: 'api:prefix-read-floor-key',
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            body: {
+              choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+              usage: {
+                prompt_tokens: 50000,
+                completion_tokens: 5,
+                total_tokens: 50005,
+                prompt_tokens_details: { cached_tokens: 0 },
+                cache_creation_input_tokens: 40000,
+              },
+            },
+          };
+        },
+      };
+      const first = await handleMessages(structuredClone(requestBody), context);
+      const second = await handleMessages(structuredClone(requestBody), context);
+
+      assert.equal(first.body.usage.input_tokens, 1);
+      assert.equal(first.body.usage.cache_read_input_tokens, 60000);
+      assert.ok(expectedTailTokens < expectedPromptTokens);
+      assert.equal(first.body.usage.cache_creation_input_tokens, expectedTailTokens);
+      assert.equal(first.body.usage.cache_creation.ephemeral_5m_input_tokens, expectedTailTokens);
+      assert.equal(first.body.usage.cache_creation.ephemeral_1h_input_tokens, 0);
+      assert.equal(second.body.usage.input_tokens, 1);
+      assert.equal(second.body.usage.cache_read_input_tokens, 60000 + expectedTailTokens);
+      assert.equal(second.body.usage.cache_creation_input_tokens, expectedTailTokens);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_CACHE_BUCKETS = prevEnabled;
+      if (prevBasis === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS = prevBasis;
+      if (prevFresh === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_FRESH_INPUT_TOKENS = prevFresh;
+      if (prevInclude === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_INCLUDE_UPSTREAM_PREFIX = prevInclude;
+      if (prevExtra === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_EXTRA_PREFIX_TOKENS = prevExtra;
+      if (prevBucket === undefined) delete process.env.WINDSURFAPI_ANTHROPIC_REPORTED_PREFIX_BUCKET;
+      else process.env.WINDSURFAPI_ANTHROPIC_REPORTED_PREFIX_BUCKET = prevBucket;
     }
   });
 

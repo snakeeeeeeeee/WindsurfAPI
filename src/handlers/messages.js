@@ -122,6 +122,13 @@ function reportedAnthropicExtraPrefixTokens() {
   return Math.floor(n);
 }
 
+function reportedAnthropicPrefixBucket() {
+  const raw = String(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_PREFIX_BUCKET || '').trim().toLowerCase();
+  if (raw === 'cache_read' || raw === 'read' || raw === 'cached' || raw === 'hit') return 'cache_read';
+  if (raw === 'cache_creation' || raw === 'creation' || raw === 'write' || raw === 'cache_write') return 'cache_creation';
+  return 'auto';
+}
+
 function scaleAnthropicCacheCreationSplit(split, reportedTotal) {
   if (!split || typeof split !== 'object') return split;
 
@@ -163,6 +170,12 @@ function normalizeAnthropicCacheCreationSplit(split, reportedTotal) {
   };
   const splitTotal = normalized.ephemeral_5m_input_tokens + normalized.ephemeral_1h_input_tokens;
   if (splitTotal === total) return normalized;
+  if (splitTotal <= 0 && total > 0) {
+    return {
+      ephemeral_5m_input_tokens: total,
+      ephemeral_1h_input_tokens: 0,
+    };
+  }
   return scaleAnthropicCacheCreationSplit(normalized, total);
 }
 
@@ -307,6 +320,26 @@ export function estimateAnthropicClientPromptTokens(body) {
   return Math.max(1, tokens);
 }
 
+export function estimateAnthropicClientTailTokens(body) {
+  if (!Array.isArray(body?.messages) || body.messages.length === 0) {
+    return estimateAnthropicClientPromptTokens(body);
+  }
+
+  let startIndex = 0;
+  for (let i = body.messages.length - 1; i >= 0; i--) {
+    if (body.messages[i]?.role === 'assistant') {
+      startIndex = i + 1;
+      break;
+    }
+  }
+
+  let tokens = 0;
+  for (const message of body.messages.slice(startIndex)) {
+    tokens += estimateMessageTokens(message);
+  }
+  return Math.max(1, tokens);
+}
+
 function cacheTtlMs(ttl) {
   return ttl === '1h' ? 60 * 60 * 1000 : 5 * 60 * 1000;
 }
@@ -435,9 +468,11 @@ function extractAnthropicCacheBreakpoints(body) {
 }
 
 const reportedAnthropicCacheEntries = new Map();
+const reportedAnthropicSyntheticTailEntries = new Map();
 
 export function resetReportedAnthropicCacheForTests() {
   reportedAnthropicCacheEntries.clear();
+  reportedAnthropicSyntheticTailEntries.clear();
 }
 
 function pruneReportedAnthropicCache(now = Date.now()) {
@@ -450,6 +485,14 @@ function pruneReportedAnthropicCache(now = Date.now()) {
     if (!oldestKey) break;
     reportedAnthropicCacheEntries.delete(oldestKey);
   }
+  for (const [key, entry] of reportedAnthropicSyntheticTailEntries) {
+    if (!entry || entry.expiresAt <= now) reportedAnthropicSyntheticTailEntries.delete(key);
+  }
+  while (reportedAnthropicSyntheticTailEntries.size > maxEntries) {
+    const oldestKey = reportedAnthropicSyntheticTailEntries.keys().next().value;
+    if (!oldestKey) break;
+    reportedAnthropicSyntheticTailEntries.delete(oldestKey);
+  }
 }
 
 function reportedCacheScope(body, context = {}) {
@@ -457,6 +500,32 @@ function reportedCacheScope(body, context = {}) {
     context.callerKey || '',
     body?.model || 'claude-sonnet-4.6',
   ].join('|');
+}
+
+function syntheticTailKey(scope) {
+  return `${scope}|synthetic-tail`;
+}
+
+function readSyntheticTailTokens(scope, now = Date.now()) {
+  pruneReportedAnthropicCache(now);
+  const entry = reportedAnthropicSyntheticTailEntries.get(syntheticTailKey(scope));
+  if (!entry || entry.expiresAt <= now) return 0;
+  return entry.tokens;
+}
+
+function recordSyntheticTailTokens(scope, tokens, now = Date.now()) {
+  const n = nonNegativeInteger(tokens);
+  if (n <= 0) return;
+  pruneReportedAnthropicCache(now);
+  const key = syntheticTailKey(scope);
+  const existing = reportedAnthropicSyntheticTailEntries.get(key);
+  const existingTokens = existing && existing.expiresAt > now ? existing.tokens : 0;
+  reportedAnthropicSyntheticTailEntries.set(key, {
+    tokens: existingTokens + n,
+    expiresAt: now + cacheTtlMs('5m'),
+    lastSeenAt: now,
+  });
+  pruneReportedAnthropicCache(now);
 }
 
 function buildOfficialReportedUsageBasis(body, context = {}) {
@@ -618,18 +687,45 @@ function upstreamReportedPrefixTokens(usage = {}) {
   return Math.max(cacheRead, cacheCreation);
 }
 
-function applyReportedSystemPrefixFloor(anthropicUsage, usage = {}) {
+function applyReportedSystemPrefixFloor(anthropicUsage, usage = {}, opts = {}) {
   if (!anthropicReportedCacheBucketsEnabled()) return anthropicUsage;
 
   const upstreamPrefix = reportedAnthropicIncludeUpstreamPrefix()
     ? upstreamReportedPrefixTokens(usage)
     : 0;
   const extraPrefix = reportedAnthropicExtraPrefixTokens();
-  const prefixFloor = upstreamPrefix + extraPrefix;
+  const syntheticRead = opts.reportedCacheScope
+    ? readSyntheticTailTokens(opts.reportedCacheScope)
+    : 0;
+  const prefixFloor = upstreamPrefix + extraPrefix + syntheticRead;
   if (prefixFloor <= 0) return anthropicUsage;
 
   const currentRead = Number(anthropicUsage.cache_read_input_tokens) || 0;
   const currentCreation = Number(anthropicUsage.cache_creation_input_tokens) || 0;
+  const bucket = reportedAnthropicPrefixBucket();
+  if (bucket === 'cache_read') {
+    const cacheRead = Math.max(currentRead, prefixFloor);
+    const reportedTailTokens = nonNegativeInteger(opts.reportedTailTokens);
+    const tailCreation = reportedTailTokens > 0
+      ? reportedTailTokens
+      : Math.max(0, (Number(anthropicUsage.input_tokens) || 0) + currentCreation);
+    const cacheCreation = tailCreation;
+    if (opts.reportedCacheScope) recordSyntheticTailTokens(opts.reportedCacheScope, cacheCreation);
+    return {
+      ...anthropicUsage,
+      cache_read_input_tokens: cacheRead,
+      cache_creation_input_tokens: cacheCreation,
+      cache_creation: normalizeAnthropicCacheCreationSplit(anthropicUsage.cache_creation, cacheCreation),
+    };
+  }
+  if (bucket === 'cache_creation') {
+    const cacheCreation = Math.max(currentCreation, prefixFloor);
+    return {
+      ...anthropicUsage,
+      cache_creation_input_tokens: cacheCreation,
+      cache_creation: scaleAnthropicCacheCreationSplit(anthropicUsage.cache_creation, cacheCreation),
+    };
+  }
   if (currentRead > 0) {
     return {
       ...anthropicUsage,
@@ -956,7 +1052,7 @@ function buildAnthropicUsage(usage, opts = {}) {
       return applyReportedSystemPrefixFloor(applyAnthropicReportedCacheBuckets(anthropicUsage, {
         promptTotal,
         cacheRead,
-      }), usage);
+      }), usage, opts);
     }
     const basisUsage = {
       ...anthropicUsage,
@@ -968,17 +1064,17 @@ function buildAnthropicUsage(usage, opts = {}) {
         ephemeral_1h_input_tokens: 0,
       },
     };
-    if (basis.skipConfiguredCacheRewrite) return applyReportedSystemPrefixFloor(basisUsage, usage);
+    if (basis.skipConfiguredCacheRewrite) return applyReportedSystemPrefixFloor(basisUsage, usage, opts);
     return applyReportedSystemPrefixFloor(applyAnthropicReportedCacheBuckets(basisUsage, {
       promptTotal: Number(basis.promptTotal) || Number(basis.input_tokens) || 0,
       cacheRead: Number(basis.cache_read_input_tokens) || 0,
       useBaseRateFloor: false,
-    }), usage);
+    }), usage, opts);
   }
   return applyReportedSystemPrefixFloor(applyAnthropicReportedCacheBuckets(anthropicUsage, {
     promptTotal,
     cacheRead,
-  }), usage);
+  }), usage, opts);
 }
 
 function applyAnthropicReportedCacheBuckets(anthropicUsage, { promptTotal = 0, cacheRead = 0, useBaseRateFloor = true } = {}) {
@@ -1023,6 +1119,8 @@ class AnthropicStreamTranslator {
     this.msgId = msgId;
     this.model = model;
     this.reportedUsageBasis = opts.reportedUsageBasis || null;
+    this.reportedTailTokens = opts.reportedTailTokens || 0;
+    this.reportedCacheScope = opts.reportedCacheScope || '';
     this.reportedOutputBasis = opts.reportedOutputBasis || reportedAnthropicOutputBasis();
     this.reportedOutputTokens = 0;
     // Current content block: null | { type, index }
@@ -1191,6 +1289,8 @@ class AnthropicStreamTranslator {
       delta: { stop_reason: this.stopReason, stop_sequence: null },
       usage: buildAnthropicUsage(u, {
         reportedUsageBasis: this.reportedUsageBasis,
+        reportedTailTokens: this.reportedTailTokens,
+        reportedCacheScope: this.reportedCacheScope,
         ...(this.reportedOutputBasis === 'response'
           ? { reportedOutputTokens: Math.max(1, this.reportedOutputTokens) }
           : {}),
@@ -1320,6 +1420,8 @@ export async function handleMessages(body, context = {}) {
     || (reportedAnthropicUsageBasis() === 'hybrid'
       ? { resolve: usage => buildHybridReportedUsageBasis(reportedUsageRequestBody, effectiveContext, usage) }
       : null);
+  const reportedTailTokens = estimateAnthropicClientTailTokens(reportedUsageRequestBody);
+  const reportedScope = reportedCacheScope(reportedUsageRequestBody, effectiveContext);
   const outputBasis = reportedAnthropicOutputBasis();
   const openaiBody = anthropicToOpenAI(body);
 
@@ -1344,7 +1446,11 @@ export async function handleMessages(body, context = {}) {
     }
     return {
       status: 200,
-      body: openAIToAnthropic(result.body, requestedModel, msgId, { reportedUsageBasis }),
+      body: openAIToAnthropic(result.body, requestedModel, msgId, {
+        reportedUsageBasis,
+        reportedTailTokens,
+        reportedCacheScope: reportedScope,
+      }),
     };
   }
 
@@ -1384,6 +1490,8 @@ export async function handleMessages(body, context = {}) {
     async handler(realRes) {
       const translator = new AnthropicStreamTranslator(realRes, msgId, requestedModel, {
         reportedUsageBasis,
+        reportedTailTokens,
+        reportedCacheScope: reportedScope,
         reportedOutputBasis: outputBasis,
       });
       const captureRes = createCaptureRes(translator, realRes);
