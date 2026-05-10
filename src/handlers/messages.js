@@ -440,28 +440,19 @@ function collectTextBlocks(content) {
   return parts.join('\n');
 }
 
-function collectSystemText(system) {
-  if (typeof system === 'string') return system;
-  if (!Array.isArray(system)) return '';
-  return system
-    .filter(block => block?.type === 'text' && typeof block.text === 'string')
-    .map(block => block.text)
-    .join('\n');
-}
-
 export function isAnthropicConversationCompactionRequest(body) {
   if (!body || !Array.isArray(body.messages)) return false;
-  const textParts = [];
-  const sys = collectSystemText(body.system);
-  if (sys) textParts.push(sys);
-  for (const message of body.messages) {
-    const text = collectTextBlocks(message?.content);
-    if (text) textParts.push(text);
+  let latestUserText = '';
+  for (let i = body.messages.length - 1; i >= 0; i--) {
+    const message = body.messages[i];
+    if (message?.role !== 'user') continue;
+    latestUserText = collectTextBlocks(message.content);
+    break;
   }
-  const text = textParts.join('\n').replace(/\s+/g, ' ').trim();
+  const text = latestUserText.replace(/\s+/g, ' ').trim();
   if (!text) return false;
 
-  const longConversation = body.messages.length >= 20 || text.length >= 50_000;
+  const longConversation = body.messages.length >= 20 || text.length >= 10_000;
   const exactCompaction = /\b(?:compact|compaction|condense|compress)\b.{0,120}\b(?:conversation|context|transcript|history|session)\b/i.test(text)
     || /\b(?:conversation|context|transcript|history|session)\b.{0,120}\b(?:compact|compaction|condense|compress)\b/i.test(text);
   const summaryOfConversation = /\b(?:create|generate|write|produce|provide)?\s*(?:a\s+)?(?:detailed\s+)?summary\s+of\s+(?:the\s+|this\s+|our\s+)?(?:conversation|context|chat|transcript|history|session)\b/i.test(text);

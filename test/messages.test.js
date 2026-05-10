@@ -233,6 +233,37 @@ describe('Anthropic messages request translation', () => {
     }), false);
   });
 
+  it('does not keep forcing plain text after compaction when the next user asks to continue', async () => {
+    let capturedBody = null;
+    await handleMessages({
+      model: 'claude-sonnet-4.6',
+      tools: [{ name: 'Read', description: 'read files', input_schema: { type: 'object' } }],
+      messages: [
+        {
+          role: 'assistant',
+          content: 'Summary of the conversation so far for a future instance to continue from. Previous actions: read files and ran tests.',
+        },
+        { role: 'user', content: '继续' },
+      ],
+    }, {
+      async handleChatCompletions(body) {
+        capturedBody = body;
+        return {
+          status: 200,
+          body: {
+            model: body.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+
+    assert.equal(capturedBody.__forceTextResponse, undefined);
+    assert.equal(capturedBody.tools.length, 1);
+    assert.equal(capturedBody.tools[0].function.name, 'Read');
+  });
+
   it('annotates risky Read tool_result stubs before Cascade sees them', async () => {
     let capturedBody = null;
     await handleMessages({
