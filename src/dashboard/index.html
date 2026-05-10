@@ -2780,6 +2780,14 @@ window._firebaseOAuth = async function(provider) {
             <input class="input" data-env-key="WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS" data-i18n-placeholder="runtimeEnv.transientStallSwitchMaxPlaceholder" placeholder="留空 = 1">
           </label>
           <label class="form-field">
+            <span data-i18n="runtimeEnv.disableHistoryTrim">禁用 Cascade 历史裁剪</span>
+            <select class="input" data-env-key="CASCADE_DISABLE_HISTORY_TRIM">
+              <option value="" data-i18n="runtimeEnv.defaultOff">默认关闭</option>
+              <option value="1" data-i18n="runtimeEnv.on">1 - 开启</option>
+              <option value="0" data-i18n="runtimeEnv.off">关闭</option>
+            </select>
+          </label>
+          <label class="form-field">
             <span data-i18n="runtimeEnv.dumpPrompt">打印完整 prompt</span>
             <select class="input" data-env-key="CASCADE_DEBUG_DUMP_PROMPT">
               <option value="" data-i18n="runtimeEnv.off">关闭</option>

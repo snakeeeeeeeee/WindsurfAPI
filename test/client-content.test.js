@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { compactSystemPromptForCascade, contentToString } from '../src/client.js';
+import { cascadeHistoryBudget, compactSystemPromptForCascade, contentToString } from '../src/client.js';
 
 describe('Cascade text conversion safety', () => {
   it('does not serialize image base64 into replayed text history', () => {
@@ -29,5 +29,16 @@ describe('Cascade text conversion safety', () => {
     assert.ok(!/x-anthropic-billing-header/i.test(compact));
     assert.ok(!/Claude Code/i.test(compact));
     assert.ok(compact.includes('Working directory: /Users/blithe/Downloads/Code/Test'));
+  });
+
+  it('can disable Cascade history trimming with an env switch', () => {
+    const prev = process.env.CASCADE_DISABLE_HISTORY_TRIM;
+    process.env.CASCADE_DISABLE_HISTORY_TRIM = '1';
+    try {
+      assert.equal(cascadeHistoryBudget('claude-opus-4-6-thinking'), Number.POSITIVE_INFINITY);
+    } finally {
+      if (prev === undefined) delete process.env.CASCADE_DISABLE_HISTORY_TRIM;
+      else process.env.CASCADE_DISABLE_HISTORY_TRIM = prev;
+    }
   });
 });

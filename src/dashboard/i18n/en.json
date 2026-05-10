@@ -726,6 +726,7 @@
     "pollMidUntil": "Mid poll duration (ms)",
     "transientStallSwitchMax": "Cold-stall account switches",
     "transientStallSwitchMaxPlaceholder": "Empty = 1; 0 = no switch",
+    "disableHistoryTrim": "Disable Cascade history trim",
     "dumpPrompt": "Dump full prompt",
     "hint": "For production cache diagnostics: Usage=upstream, leave Fresh input tokens empty, and set CASCADE_REUSE_HASH_SYSTEM=0. Force shared-key reuse only for private single-user deployments."
   },

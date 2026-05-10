@@ -209,7 +209,8 @@ function dumpCascadePromptForDebug({
   log.warn('Cascade prompt dump END');
 }
 
-function cascadeHistoryBudget(modelUid) {
+export function cascadeHistoryBudget(modelUid) {
+  if (boolEnv('CASCADE_DISABLE_HISTORY_TRIM')) return Number.POSITIVE_INFINITY;
   // Default 400KB — long conversations (100+ turns with tool results)
   // easily hit the old 200KB limit, causing silent context amputation.
   // Still configurable via env for memory-constrained hosts.

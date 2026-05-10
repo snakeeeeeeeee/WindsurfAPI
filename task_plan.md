@@ -81,3 +81,19 @@
 - [complete] Phase 3: Dashboard/runtime-config/i18n 增加配置项。
 - [complete] Phase 4: 增加 read-only hit-rate 回归测试并验证。
 - [complete] Phase 5: 热更新 Docker，清理旧命中率覆盖并启用新配置。
+
+## 2026-05-10 禁用 Cascade 历史裁剪
+
+## Goal
+
+- 用户确认模型路由支持长上下文，要求不要裁剪历史。
+- 增加显式运行时开关，允许完整回放客户端历史。
+- 通过 Dashboard 可配置，默认关闭。
+
+## Phases
+
+- [complete] Phase 1: 确认当前裁剪由 `cascadeHistoryBudget()` 控制。
+- [complete] Phase 2: 增加 `CASCADE_DISABLE_HISTORY_TRIM=1` 开关。
+- [complete] Phase 3: Dashboard/runtime-config/i18n 增加配置项。
+- [complete] Phase 4: 增加回归测试并验证。
+- [complete] Phase 5: 热更新 Docker 并启用配置。

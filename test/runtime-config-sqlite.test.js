@@ -30,6 +30,7 @@ const BUSINESS_ENV_KEYS = [
   'CASCADE_POLL_MID_MS',
   'CASCADE_POLL_MID_UNTIL_MS',
   'WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS',
+  'CASCADE_DISABLE_HISTORY_TRIM',
   'CASCADE_DEBUG_DUMP_PROMPT',
 ];
 
@@ -90,6 +91,7 @@ describe('runtime-config SQLite defaults', () => {
     process.env.CASCADE_REUSE_SINGLE_TOOL_ALIAS = '1';
     process.env.CASCADE_POLL_FAST_MS = '150';
     process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS = '2';
+    process.env.CASCADE_DISABLE_HISTORY_TRIM = '1';
     process.env.CASCADE_DEBUG_DUMP_PROMPT = '1';
 
     const runtime = await loadRuntime();
@@ -103,6 +105,7 @@ describe('runtime-config SQLite defaults', () => {
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_REUSE_SINGLE_TOOL_ALIAS, '1');
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_POLL_FAST_MS, '150');
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, '2');
+    assert.equal(runtime.getBusinessEnvConfig().CASCADE_DISABLE_HISTORY_TRIM, '1');
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_DEBUG_DUMP_PROMPT, '1');
   });
 
@@ -138,6 +141,7 @@ describe('runtime-config SQLite defaults', () => {
       CASCADE_REUSE_SINGLE_TOOL_ALIAS: '1',
       CASCADE_POLL_INTERVAL_MS: '500',
       WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS: '2',
+      CASCADE_DISABLE_HISTORY_TRIM: '1',
       CASCADE_DEBUG_DUMP_PROMPT: '1',
     });
     assert.equal(process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'runtime=target');
@@ -151,6 +155,7 @@ describe('runtime-config SQLite defaults', () => {
     assert.equal(process.env.CASCADE_REUSE_SINGLE_TOOL_ALIAS, '1');
     assert.equal(process.env.CASCADE_POLL_INTERVAL_MS, '500');
     assert.equal(process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, '2');
+    assert.equal(process.env.CASCADE_DISABLE_HISTORY_TRIM, '1');
     assert.equal(process.env.CASCADE_DEBUG_DUMP_PROMPT, '1');
 
     runtime.setBusinessEnvConfig({
@@ -164,6 +169,7 @@ describe('runtime-config SQLite defaults', () => {
       CASCADE_REUSE_SINGLE_TOOL_ALIAS: '',
       CASCADE_POLL_INTERVAL_MS: '',
       WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS: '',
+      CASCADE_DISABLE_HISTORY_TRIM: '',
       CASCADE_DEBUG_DUMP_PROMPT: '',
     });
     runtime = await loadRuntime();
@@ -179,6 +185,7 @@ describe('runtime-config SQLite defaults', () => {
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_REUSE_SINGLE_TOOL_ALIAS, undefined);
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_POLL_INTERVAL_MS, undefined);
     assert.equal(runtime.getBusinessEnvConfig().WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, undefined);
+    assert.equal(runtime.getBusinessEnvConfig().CASCADE_DISABLE_HISTORY_TRIM, undefined);
     assert.equal(runtime.getBusinessEnvConfig().CASCADE_DEBUG_DUMP_PROMPT, undefined);
     assert.equal(process.env.WINDSURFAPI_PUBLIC_MODEL_ALIASES, 'runtime=target');
     assert.equal(process.env.WINDSURFAPI_ANTHROPIC_REPORTED_USAGE_BASIS, undefined);
@@ -191,6 +198,7 @@ describe('runtime-config SQLite defaults', () => {
     assert.equal(process.env.CASCADE_REUSE_SINGLE_TOOL_ALIAS, undefined);
     assert.equal(process.env.CASCADE_POLL_INTERVAL_MS, undefined);
     assert.equal(process.env.WINDSURFAPI_TRANSIENT_STALL_SWITCH_MAX_ATTEMPTS, undefined);
+    assert.equal(process.env.CASCADE_DISABLE_HISTORY_TRIM, undefined);
     assert.equal(process.env.CASCADE_DEBUG_DUMP_PROMPT, undefined);
   });
 

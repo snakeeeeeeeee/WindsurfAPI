@@ -726,6 +726,7 @@
     "pollMidUntil": "中速轮询持续时间（ms）",
     "transientStallSwitchMax": "冷无输出换号次数",
     "transientStallSwitchMaxPlaceholder": "留空 = 1；0 = 不换号",
+    "disableHistoryTrim": "禁用 Cascade 历史裁剪",
     "dumpPrompt": "打印完整 prompt",
     "hint": "生产排查真实缓存建议：Usage=upstream，Fresh input tokens 留空，CASCADE_REUSE_HASH_SYSTEM=0。共享 key 强制复用只有单用户私有部署才建议开启。"
   },
