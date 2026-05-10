@@ -97,3 +97,19 @@
 - [complete] Phase 3: Dashboard/runtime-config/i18n 增加配置项。
 - [complete] Phase 4: 增加回归测试并验证。
 - [complete] Phase 5: 热更新 Docker 并启用配置。
+
+## 2026-05-10 Claude CLI /compact 纯文本兼容
+
+## Goal
+
+- 不恢复历史裁剪，继续允许完整长上下文传入。
+- 修复 Claude CLI `/compact` 报 `response did not contain valid text content`。
+- 会话压缩/摘要请求强制纯文本返回，不让代理把摘要输出误解析成 `tool_use`。
+
+## Phases
+
+- [complete] Phase 1: 定位 `/v1/messages` 到 chat 工具解析路径。
+- [complete] Phase 2: Messages 层识别会话压缩/续聊摘要请求，并移除本轮 tools/tool_choice。
+- [complete] Phase 3: Chat 层在 `__forceTextResponse` 下禁用 native bridge、tool preamble、流式/非流式工具输出解析。
+- [complete] Phase 4: 增加回归测试并验证普通文件总结不误伤。
+- [complete] Phase 5: 热更新 Docker 服务并确认健康状态。

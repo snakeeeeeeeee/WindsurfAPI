@@ -428,6 +428,61 @@ function estimateMessageTokens(message) {
   return 4 + estimateAnthropicContentTokens(message?.content);
 }
 
+function collectTextBlocks(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts = [];
+  for (const block of content) {
+    if (block?.type === 'text' && typeof block.text === 'string') {
+      parts.push(block.text);
+    }
+  }
+  return parts.join('\n');
+}
+
+function collectSystemText(system) {
+  if (typeof system === 'string') return system;
+  if (!Array.isArray(system)) return '';
+  return system
+    .filter(block => block?.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text)
+    .join('\n');
+}
+
+export function isAnthropicConversationCompactionRequest(body) {
+  if (!body || !Array.isArray(body.messages)) return false;
+  const textParts = [];
+  const sys = collectSystemText(body.system);
+  if (sys) textParts.push(sys);
+  for (const message of body.messages) {
+    const text = collectTextBlocks(message?.content);
+    if (text) textParts.push(text);
+  }
+  const text = textParts.join('\n').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+
+  const longConversation = body.messages.length >= 20 || text.length >= 50_000;
+  const exactCompaction = /\b(?:compact|compaction|condense|compress)\b.{0,120}\b(?:conversation|context|transcript|history|session)\b/i.test(text)
+    || /\b(?:conversation|context|transcript|history|session)\b.{0,120}\b(?:compact|compaction|condense|compress)\b/i.test(text);
+  const summaryOfConversation = /\b(?:create|generate|write|produce|provide)?\s*(?:a\s+)?(?:detailed\s+)?summary\s+of\s+(?:the\s+|this\s+|our\s+)?(?:conversation|context|chat|transcript|history|session)\b/i.test(text);
+  const summarizeConversation = /\bsummari[sz]e\s+(?:the\s+|this\s+|our\s+)?(?:conversation|context|chat|transcript|history|session)\b/i.test(text);
+  const claudeCodeHandoff = /\bsummary\b/i.test(text)
+    && /\b(?:user'?s explicit requests|previous actions|technical details|code patterns|architectural decisions|future instance|continue from)\b/i.test(text);
+  const zhCompaction = /(?:压缩|总结|摘要).{0,80}(?:会话|上下文|对话|历史)/.test(text)
+    || /(?:会话|上下文|对话|历史).{0,80}(?:压缩|总结|摘要)/.test(text);
+  const broadLongSummary = longConversation
+    && /\b(?:summary|summari[sz]e|compact|compaction|condense|compress)\b/i.test(text)
+    && /\b(?:conversation|context|transcript|history|session|previous messages)\b/i.test(text)
+    && /\b(?:so far|continue|resume|future|handoff|carry forward|previous)\b/i.test(text);
+
+  return exactCompaction
+    || summaryOfConversation
+    || summarizeConversation
+    || claudeCodeHandoff
+    || zhCompaction
+    || broadLongSummary;
+}
+
 // Every prior boundary in the request is a candidate prefix hash, so a
 // current-request breakpoint can match a cache entry stored by a prior
 // request that placed its own breakpoint anywhere earlier in the common
@@ -1489,7 +1544,13 @@ export async function handleMessages(body, context = {}) {
   const reportedTailTokens = estimateAnthropicClientTailTokens(reportedUsageRequestBody);
   const reportedScope = reportedCacheScope(reportedUsageRequestBody, effectiveContext);
   const outputBasis = reportedAnthropicOutputBasis();
+  const forceTextResponse = isAnthropicConversationCompactionRequest(body);
   const openaiBody = anthropicToOpenAI(body);
+  if (forceTextResponse) {
+    log.info(`messages: conversation compaction detected; forcing plain-text response (messages=${Array.isArray(body.messages) ? body.messages.length : 0}, tools=${Array.isArray(body.tools) ? body.tools.length : 0})`);
+    delete openaiBody.tools;
+    delete openaiBody.tool_choice;
+  }
 
   if (!wantStream) {
     const result = await chatHandler({
@@ -1497,6 +1558,7 @@ export async function handleMessages(body, context = {}) {
       stream: false,
       __route: 'messages',
       __skipReportedUsageOverrides: anthropicReportedCacheBucketsEnabled(),
+      ...(forceTextResponse ? { __forceTextResponse: true } : {}),
     }, effectiveContext);
     if (result.status !== 200) {
       return {
@@ -1528,6 +1590,7 @@ export async function handleMessages(body, context = {}) {
     stream: true,
     __route: 'messages',
     __skipReportedUsageOverrides: anthropicReportedCacheBucketsEnabled(),
+    ...(forceTextResponse ? { __forceTextResponse: true } : {}),
   }, effectiveContext);
 
   if (!streamResult.stream) {

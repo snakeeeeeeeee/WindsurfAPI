@@ -23,6 +23,7 @@ const {
   extractCallerSubKey,
   handleMessages,
   resetReportedAnthropicCacheForTests,
+  isAnthropicConversationCompactionRequest,
 } = await import('../src/handlers/messages.js');
 const {
   applyJsonResponseHint,
@@ -178,6 +179,58 @@ describe('Anthropic messages request translation', () => {
       assert.equal(result.status, 200);
       assert.deepEqual(capturedBody.tool_choice, testCase.expected);
     }
+  });
+
+  it('forces Claude CLI conversation compaction requests to plain text', async () => {
+    let capturedBody = null;
+    const messages = [
+      { role: 'user', content: 'Build the feature' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: 'src/index.js' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'const x = 1;' }] },
+      { role: 'user', content: 'Create a detailed summary of the conversation so far for a future instance to continue from.' },
+    ];
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      tools: [{ name: 'Read', description: 'read files', input_schema: { type: 'object' } }],
+      tool_choice: { type: 'auto' },
+      messages,
+    }, {
+      async handleChatCompletions(body) {
+        capturedBody = body;
+        return {
+          status: 200,
+          body: {
+            model: body.model,
+            choices: [{
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: '<tool_call>{"name":"Read","arguments":{"file_path":"package.json"}}</tool_call>\nSummary text.',
+              },
+              finish_reason: 'stop',
+            }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+
+    assert.equal(capturedBody.__forceTextResponse, true);
+    assert.equal(capturedBody.tools, undefined);
+    assert.equal(capturedBody.tool_choice, undefined);
+    assert.equal(result.body.stop_reason, 'end_turn');
+    assert.deepEqual(result.body.content, [{
+      type: 'text',
+      text: '<tool_call>{"name":"Read","arguments":{"file_path":"package.json"}}</tool_call>\nSummary text.',
+    }]);
+  });
+
+  it('does not force plain text for normal file summarization requests', () => {
+    assert.equal(isAnthropicConversationCompactionRequest({
+      model: 'claude-sonnet-4.6',
+      tools: [{ name: 'Read', input_schema: { type: 'object' } }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Summarize package.json' }] }],
+    }), false);
   });
 
   it('annotates risky Read tool_result stubs before Cascade sees them', async () => {

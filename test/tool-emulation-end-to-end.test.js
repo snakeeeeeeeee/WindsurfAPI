@@ -166,4 +166,24 @@ describe('end-to-end: salvaged tool_call → Anthropic tool_use block', () => {
     const toolUse = anthropic.content.find(c => c.type === 'tool_use');
     assert.equal(toolUse.input.cmd, 'echo "hi" > out.txt');
   });
+
+  test('conversation compaction mode must return tool-shaped text as text', () => {
+    const rawText = '<tool_call>{"name":"echo_text","arguments":{"text":"HELLO"}}</tool_call>\nSummary for future continuation.';
+    const openAI = {
+      id: 'chatcmpl-test',
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: 'claude-sonnet-4.6',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: rawText },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    };
+    const anthropic = openAIToAnthropic(openAI, 'claude-sonnet-4.6', 'msg_test');
+    assert.equal(anthropic.stop_reason, 'end_turn');
+    assert.equal(anthropic.content.length, 1);
+    assert.deepEqual(anthropic.content[0], { type: 'text', text: rawText });
+  });
 });
